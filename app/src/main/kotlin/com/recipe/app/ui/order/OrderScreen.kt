@@ -1,0 +1,184 @@
+package com.recipe.app.ui.order
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.recipe.app.viewmodel.OrderUiState
+import com.recipe.app.viewmodel.OrderViewModel
+import com.recipe.core.domain.AggregatedIngredients
+import com.recipe.core.model.OrderItem
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun OrderScreen(
+    viewModel: OrderViewModel,
+    onBack: () -> Unit,
+    onConfirmed: () -> Unit
+) {
+    val state by viewModel.uiState.collectAsState()
+    var showIngredients by remember { mutableStateOf(false) }
+
+    if (state.confirmed) {
+        onConfirmed()
+        return
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("点菜") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            FilledTonalButton(
+                onClick = { showIngredients = true },
+                modifier = Modifier.fillMaxWidth().padding(16.dp)
+            ) {
+                Text("一键输出所需材料")
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                RandomCategoryDropdown(state, viewModel)
+                Button(
+                    onClick = { viewModel.randomSelect() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("随机选菜") }
+            }
+            state.error?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+            if (state.cart.isEmpty) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("点菜车是空的，去菜谱页添加吧", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(state.cart.items, key = { it.recipeId }) { item ->
+                        CartItemRow(item, viewModel)
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(16.dp)) {
+                    OutlinedButton(
+                        onClick = { viewModel.confirm() },
+                        modifier = Modifier.weight(1f),
+                        enabled = !state.cart.isEmpty
+                    ) {
+                        Text("确认下单 / 保存菜单")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showIngredients) {
+        IngredientsDialog(state.aggregated, onDismiss = { showIngredients = false })
+    }
+}
+
+@Composable
+private fun RandomCategoryDropdown(state: OrderUiState, viewModel: OrderViewModel) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text(if (state.randomCategory.isBlank()) "全部分类" else state.randomCategory)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("全部分类") }, onClick = {
+                viewModel.setRandomCategory("")
+                expanded = false
+            })
+            state.categories.forEach { category ->
+                DropdownMenuItem(text = { Text(category) }, onClick = {
+                    viewModel.setRandomCategory(category)
+                    expanded = false
+                })
+            }
+        }
+    }
+}
+
+@Composable
+private fun CartItemRow(item: OrderItem, viewModel: OrderViewModel) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(item.recipeName, style = MaterialTheme.typography.titleSmall)
+                Text("数量：${item.quantity}", style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = { viewModel.updateQuantity(item.recipeId, item.quantity - 1) }) { Text("-") }
+            Text("${item.quantity}", modifier = Modifier.padding(horizontal = 8.dp))
+            TextButton(onClick = { viewModel.updateQuantity(item.recipeId, item.quantity + 1) }) { Text("+") }
+            TextButton(onClick = { viewModel.remove(item.recipeId) }) { Text("移除", color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+
+@Composable
+private fun IngredientsDialog(aggregated: AggregatedIngredients, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        title = { Text("所需材料清单") },
+        text = {
+            Column {
+                Text("食品材料", style = MaterialTheme.typography.titleSmall)
+                aggregated.foodMaterials.forEach { Text("  ·  ${it.name}  ${it.amount}") }
+                Text("调料", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
+                aggregated.seasonings.forEach { Text("  ·  ${it.name}  ${it.amount}") }
+                if (aggregated.foodMaterials.isEmpty() && aggregated.seasonings.isEmpty()) {
+                    Text("暂无可输出的材料")
+                }
+            }
+        }
+    )
+}

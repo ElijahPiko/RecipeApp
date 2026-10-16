@@ -1,0 +1,141 @@
+package com.recipe.app.ui
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.RestaurantMenu
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.recipe.app.RecipeApplication
+import com.recipe.app.data.AppContainer
+import com.recipe.app.ui.menu.MenusScreen
+import com.recipe.app.ui.order.OrderScreen
+import com.recipe.app.ui.profile.ProfileScreen
+import com.recipe.app.ui.recipe.NewRecipeScreen
+import com.recipe.app.ui.recipes.RecipesScreen
+import com.recipe.app.viewmodel.MenusViewModel
+import com.recipe.app.viewmodel.NewRecipeViewModel
+import com.recipe.app.viewmodel.OrderViewModel
+import com.recipe.app.viewmodel.ProfileViewModel
+import com.recipe.app.viewmodel.RecipesViewModel
+
+private object Routes {
+    const val RECIPES = "recipes"
+    const val MENUS = "menus"
+    const val PROFILE = "profile"
+    const val ORDER = "order"
+    const val NEW_RECIPE = "newRecipe"
+}
+
+@Composable
+fun AppNavigation(container: AppContainer) {
+    val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+    val isTab = currentRoute in setOf(Routes.RECIPES, Routes.MENUS, Routes.PROFILE)
+
+    Scaffold(
+        bottomBar = {
+            if (isTab) {
+                BottomBar(navController, currentRoute)
+            }
+        }
+    ) { padding ->
+        NavHost(
+            navController = navController,
+            startDestination = Routes.RECIPES,
+            modifier = Modifier.padding(padding)
+        ) {
+            composable(Routes.RECIPES) {
+                val vm = viewModel<RecipesViewModel>(factory = viewModelFactory {
+                    initializer { RecipesViewModel(container.recipeRepository, container.orderCartStore) }
+                })
+                RecipesScreen(
+                    viewModel = vm,
+                    onOpenOrder = { navController.navigate(Routes.ORDER) },
+                    onNewRecipe = { navController.navigate(Routes.NEW_RECIPE) }
+                )
+            }
+            composable(Routes.MENUS) {
+                val vm = viewModel<MenusViewModel>(factory = viewModelFactory {
+                    initializer { MenusViewModel(container.menuRepository) }
+                })
+                MenusScreen(viewModel = vm)
+            }
+            composable(Routes.PROFILE) {
+                val vm = viewModel<ProfileViewModel>(factory = viewModelFactory {
+                    initializer { ProfileViewModel(container.profileRepository, container.recipeRepository) }
+                })
+                ProfileScreen(viewModel = vm)
+            }
+            composable(Routes.ORDER) {
+                val vm = viewModel<OrderViewModel>(factory = viewModelFactory {
+                    initializer { OrderViewModel(container.recipeRepository, container.menuRepository, container.orderCartStore) }
+                })
+                OrderScreen(
+                    viewModel = vm,
+                    onBack = { navController.popBackStack() },
+                    onConfirmed = {
+                        navController.navigate(Routes.MENUS) {
+                            popUpTo(Routes.RECIPES) { inclusive = false }
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
+            composable(Routes.NEW_RECIPE) {
+                val vm = viewModel<NewRecipeViewModel>(factory = viewModelFactory {
+                    initializer { NewRecipeViewModel(container.recipeRepository, container.imageUploader) }
+                })
+                NewRecipeScreen(
+                    viewModel = vm,
+                    onBack = { navController.popBackStack() },
+                    onSaved = { navController.popBackStack() }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BottomBar(navController: NavHostController, currentRoute: String?) {
+    val items = listOf(
+        Triple(Routes.RECIPES, "菜谱", Icons.Filled.RestaurantMenu),
+        Triple(Routes.MENUS, "菜单", Icons.Filled.ReceiptLong),
+        Triple(Routes.PROFILE, "个人", Icons.Filled.Person)
+    )
+    NavigationBar {
+        items.forEach { (route, label, icon) ->
+            NavigationBarItem(
+                selected = currentRoute == route,
+                onClick = {
+                    if (currentRoute != route) {
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
+                },
+                icon = { Icon(icon, contentDescription = label) },
+                label = { Text(label) }
+            )
+        }
+    }
+}
