@@ -12,6 +12,7 @@ Recipe/
 ├── server/     # JVM 后端（JDK HttpServer + MySQL JDBC + REST API）
 ├── core/       # 纯 Kotlin 共享模块（领域模型、仓库接口、聚合/校验/统计等业务逻辑）
 ├── tools/      # 离线构建辅助脚本（本地依赖镜像工具，仅本机环境使用）
+├── config/     # 环境配置（本地 / 生产隔离，含 IP、端口、数据库口令）
 ├── settings.gradle.kts
 ├── build.gradle.kts
 └── gradle/libs.versions.toml
@@ -65,6 +66,67 @@ Recipe/
 表结构由 [server/src/main/kotlin/com/recipe/server/db/Db.kt](server/src/main/kotlin/com/recipe/server/db/Db.kt)
 自动初始化。
 
+## 环境配置（本地 / 生产隔离）
+
+所有 IP、端口、数据库口令等**不再写在代码里**，统一放在 `config/` 目录：
+
+```
+config/
+├── server.local.properties            # 本地后端配置（提交）
+├── server.prod.example.properties     # 生产后端配置模板（提交，复制后填真实值）
+├── client.local.properties            # 本地客户端配置（提交）
+└── client.prod.properties             # 生产客户端配置（提交）
+```
+
+优先级从高到低：
+
+1. **环境变量**（如 `RECIPE_DB_PASSWORD`）—— 生产密码建议走这条，不落盘
+2. **项目根 `local.properties`** —— 本机私有覆盖项，不提交，可临时切换接口地址
+3. **`config/` 下对应环境的配置文件**
+4. 代码内默认值（仅当上面都没有时才生效）
+
+### 切换后端环境
+
+```bash
+gradlew :server:run                      # 自动用 config/server.local.properties
+gradlew :server:run -Drecipe.env=prod    # 显式指定生产配置
+RECIPE_ENV=prod gradlew :server:run      # 同上（跨平台写法）
+```
+
+若`config/server.prod.properties` 存在且未指定环境，默认按 `prod` 加载；
+否则用 `local`。启动日志会打印实际生效的配置来源：
+
+```
+Config env: local (source: D:\...\config\server.local.properties)
+Effective: http://0.0.0.0:8080 | db=127.0.0.1:3306/recipe_app | inMemory=false
+```
+
+`server.prod.properties` 含密码，已被 `.gitignore` 忽略；部署时更推荐直接注入
+`RECIPE_DB_PASSWORD` 环境变量，配置文件里留空即可。
+
+### 切换客户端环境
+
+客户端通过 productFlavor 区分环境，配置在构建期注入 `BuildConfig`：
+
+| Flavor | 配置文件 | 用途 |
+| --- | --- | --- |
+| `local` | `config/client.local.properties` | 本地调试（模拟器 `10.0.2.2`） |
+| `prod` | `config/client.prod.properties` | 生产包 |
+
+```bash
+gradlew :app:assembleLocalDebug        # 本地包
+gradlew :app:assembleProdRelease       # 生产包
+gradlew :app:assembleProdRelease -PrecipeEnv=local   # 生产签名但连本地后端
+```
+
+注入的字段：`BuildConfig.API_BASE_URL`、`BuildConfig.DEBUG_LOGGING`、`BuildConfig.ENV_NAME`。
+
+> **真机调试**：模拟器用 `10.0.2.2`，真机需改成电脑局域网 IP。
+> 推荐不要改 `config/`，而是在根目录 `local.properties` 里加一行覆盖（优先级更高）：
+> ```properties
+> api.baseUrl=http://192.168.1.5:8080
+> ```
+
 ## 运行后端
 
 默认连接本机 MySQL（`127.0.0.1:3306`，用户 `root`，密码 `123456`），启动后监听 `0.0.0.0:8080`。
@@ -74,10 +136,11 @@ Recipe/
 gradlew :server:run
 ```
 
-可用环境变量覆盖默认配置：
+也可用环境变量覆盖任意配置项（优先级高于配置文件，见上文）：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `RECIPE_ENV` | 自动判断 | 选择环境：`local` / `prod` |
 | `RECIPE_SERVER_HOST` | `0.0.0.0` | 监听地址 |
 | `RECIPE_SERVER_PORT` | `8080` | 端口 |
 | `RECIPE_DB_HOST` | `127.0.0.1` | MySQL 主机 |
@@ -89,16 +152,16 @@ gradlew :server:run
 
 ## 运行 Android 客户端
 
-客户端通过 `http://10.0.2.2:8080` 访问后端（Android 模拟器中 `10.0.2.2` 即本机）。
-这个地址在 [app/build.gradle.kts](app/build.gradle.kts) 的 `BuildConfig.API_BASE_URL` 中配置。
-若使用真机，请改为电脑局域网 IP。
+客户端默认连`http://10.0.2.2:8080`（模拟器中 `10.0.2.2` 即宿主机），地址由
+`config/client.<env>.properties` 注入，详见上文「切换客户端环境」。
 
 ```bash
-gradlew :app:installDebug     # 安装到已连接的模拟器/设备
-gradlew :app:assembleDebug    # 仅构建 APK
+gradlew :app:installLocalDebug     # 安装到已连接的模拟器/设备
+gradlew :app:assembleLocalDebug    # 仅构建 APK
+gradlew :app:assembleProdRelease   # 生产包
 ```
 
-APK 输出：`app/build/outputs/apk/debug/app-debug.apk`
+APK 输出：`app/build/outputs/apk/localDebug/app-local-debug.apk`
 
 ## 运行测试
 
@@ -156,4 +219,5 @@ gradlew :core:test :server:test :app:testDebugUnitTest
 - `tools/build_m2_mirror.ps1`：把 Gradle 缓存重建到 `~/.m2`（含 `-release.aar` 等 KMP 产物）
 - `tools/offline_gap_fix.ps1`：把指定 `group:artifact:version` 从缓存补进 `~/.m2`
 
-项目根目录的 `local.properties` 指向本机 Android SDK（`D:\Android`），`java.home` 使用 JDK 17。
+项目根目录的 `local.properties` 指向本机 Android SDK（`D:\Application\Android`），`java.home` 使用 JDK 17。
+该文件同时可作为本机私有覆盖项（见上文「环境配置」），且不会被提交。

@@ -24,6 +24,12 @@ fun main() {
     val config = ServerConfig()
     val start = System.currentTimeMillis()
 
+    println("Config env: ${RecipeConfigFile.envName} (source: ${config.sourceDescription})")
+    println(
+        "Effective: http://${config.host}:${config.port} | " +
+            "db=${config.dbHost}:${config.dbPort}/${config.dbName} | inMemory=${config.useInMemory}"
+    )
+
     lateinit var recipeDao: RecipeDao
     lateinit var categoryDao: CategoryDao
     lateinit var menuDao: MenuDao

@@ -1,11 +1,11 @@
-*.iml
-.gradle/
-.kotlin/
-build/
+# 本机私有覆盖配置（不提交）
+# 优先级高于 config/ 下的环境配置，可用于临时切换接口地址或密码。
 local.properties
-.idea/
-*.apk
-*.aar
-*.ap_
-captures/
-data/
+
+# 生产环境真实配置（含密码），由 server.prod.example.properties 复制而来
+config/server.prod.properties
+config/server.prod.local.properties
+
+# 系统文件
+.DS_Store
+Thumbs.db

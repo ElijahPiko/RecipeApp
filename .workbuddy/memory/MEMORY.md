@@ -4,6 +4,13 @@
 Kotlin 菜谱 App，客户端/服务端分离。三模块：`core`（纯 Kotlin 共享层）、`server`（JVM 后端）、`app`（Android 客户端）。
 技术栈：Kotlin 2.0.21 / AGP 8.10.1 / Gradle 9.4.1 / JDK 17 / compileSdk 36 / minSdk 26 / Compose+Material 3。
 README.md写得详实且与代码基本一致，可作为事实基准参考（个别环境描述已过期，见下）。
+**`ANDROID_DEV_GUIDE.md`** 是面向新手的目录结构与环境配置教程（918 行），
+用户是 Android 开发新手，改动目录/构建/配置相关时需同步维护该文档。
+
+## 用户背景
+- **Android 开发新手**，2026-10-17 首次系统了解安卓项目结构
+- 因此解释时需说明"为什么这样设计"，避免只罗列事实
+- 用中文交流
 
 ## 本机构建环境（重要）
 - **Android SDK 实际在 `D:\Application\Android`**（android-36、build-tools 36.0.0）。
@@ -26,5 +33,31 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 - 成品图以 `MEDIUMBLOB` 存`recipe.image_data`，不存 URL，单张上限 16MB（后端校验，超限返回 413）
 - 食材/调料/步骤以 JSON 列存储
 - `Db.kt` 启动时自动建库建表，并含旧库迁移逻辑（`image_data` 列的ALTER）
-- 客户端手动 DI，组装入口 `AppContainer`，API 地址由 `app/build.gradle.kts` 的
-  `BuildConfig.API_BASE_URL` 注入
+- 客户端手动 DI，组装入口 `AppContainer`
+
+## 环境配置约定（2026-10-17 建立，务必遵守）
+**所有 IP / 端口 / 数据库口令一律不写进源码**，统一放 `config/` 目录。
+
+四层优先级（高 → 低）：
+1. 环境变量（`RECIPE_*`）—— 生产密码走这条，不落盘
+2. 项目根 `local.properties` —— 本机私有覆盖项，不提交（如真机调试改 `api.baseUrl`）
+3. `config/` 下对应环境的 `.properties`
+4. 代码内默认值（仅兜底）
+
+文件清单：
+- `config/server.local.properties`（提交）｜`config/server.prod.example.properties`（模板，提交）
+- `config/client.local.properties`（`10.0.2.2:8080`）｜`config/client.prod.properties`（`120.26.55.209:8080`）
+- `config/server.prod.properties` 含密码，**已 gitignore**，部署前从 example 复制
+
+切换方式：
+- 后端：`./gradlew :server:run`（默认 local）/ `-Drecipe.env=prod` / `RECIPE_ENV=prod`
+- 客户端：productFlavor `local` / `prod`，即 `:app:assembleLocalDebug` / `:app:assembleProdRelease`，
+  可用 `-PrecipeEnv=local` 强制 release 包连本地
+
+注入字段：`BuildConfig.API_BASE_URL` / `DEBUG_LOGGING` / `ENV_NAME`
+
+## 已知遗留问题（未修）
+- **线上后端 500**：`120.26.55.209:8080` 返回 `No operations allowed after connection closed`。
+  根因：`Main.kt` 把**单个 JDBC Connection 共享**给所有 DAO，而 `HttpApi` 是 8 线程固定池；
+  JDBC Connection 非线程安全，且 `wait_timeout` 断连后无重连机制 → 永久 500。
+  修法：每请求获取 Connection，或引入连接池 + 探活重连。
