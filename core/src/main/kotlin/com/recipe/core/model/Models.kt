@@ -92,6 +92,24 @@ data class OrderCart(
 }
 
 /**
+ * The signed-in user's public info. Never carries the password hash or token.
+ */
+data class AuthUser(
+    val id: Long = 0,
+    val username: String = "",
+    val nickname: String = ""
+)
+
+/**
+ * The response payload of register / login: the session token plus the user.
+ * The client stores [token] and sends it as `Authorization: Bearer <token>`.
+ */
+data class AuthResponse(
+    val token: String = "",
+    val user: AuthUser = AuthUser()
+)
+
+/**
  * Personal configuration for the 个人 page.
  */
 data class UserProfile(

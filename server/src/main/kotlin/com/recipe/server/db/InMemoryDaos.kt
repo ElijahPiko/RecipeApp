@@ -56,26 +56,44 @@ class InMemoryRecipeDao : RecipeDao {
 
 class InMemoryMenuDao : MenuDao {
     private val store = LinkedHashMap<Long, MenuRecord>()
+    private val owners = LinkedHashMap<Long, Long>()
     private val ids = AtomicLong(1000)
 
-    override fun list(): List<MenuRecord> = store.values.sortedByDescending { it.createdAt }
-    override fun stats(): MenuStats = MenuStatsCalculator.calculate(list())
-    override fun create(record: MenuRecord): MenuRecord {
+    override fun list(userId: Long): List<MenuRecord> =
+        store.values.filter { owners[it.id] == userId }.sortedByDescending { it.createdAt }
+
+    override fun stats(userId: Long): MenuStats = MenuStatsCalculator.calculate(list(userId))
+
+    override fun create(userId: Long, record: MenuRecord): MenuRecord {
         val saved = if (record.id == 0L) record.copy(id = ids.incrementAndGet()) else record
         store[saved.id] = saved
+        owners[saved.id] = userId
         return saved
     }
-    override fun updateCost(id: Long, totalCost: Double): MenuRecord? {
+
+    override fun updateCost(userId: Long, id: Long, totalCost: Double): MenuRecord? {
+        if (owners[id] != userId) return null
         val current = store[id] ?: return null
         val updated = current.copy(totalCost = totalCost)
         store[id] = updated
         return updated
     }
-    override fun delete(id: Long) { store.remove(id) }
+
+    override fun delete(userId: Long, id: Long) {
+        if (owners[id] != userId) return
+        store.remove(id)
+        owners.remove(id)
+    }
 }
 
 class InMemoryProfileDao : ProfileDao {
-    private var profile = UserProfile()
-    override fun get(): UserProfile = profile
-    override fun save(profile: UserProfile): UserProfile { this.profile = profile; return profile }
+    private val profiles = LinkedHashMap<Long, UserProfile>()
+
+    override fun get(userId: Long): UserProfile = profiles[userId] ?: UserProfile(id = userId)
+
+    override fun save(userId: Long, profile: UserProfile): UserProfile {
+        val saved = profile.copy(id = userId)
+        profiles[userId] = saved
+        return saved
+    }
 }

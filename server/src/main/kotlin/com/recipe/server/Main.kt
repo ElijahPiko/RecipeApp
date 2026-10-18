@@ -6,14 +6,17 @@ import com.recipe.server.db.InMemoryCategoryDao
 import com.recipe.server.db.InMemoryMenuDao
 import com.recipe.server.db.InMemoryProfileDao
 import com.recipe.server.db.InMemoryRecipeDao
+import com.recipe.server.db.InMemoryUserDao
 import com.recipe.server.db.JsonHolder
 import com.recipe.server.db.MenuDao
 import com.recipe.server.db.MySqlCategoryDao
 import com.recipe.server.db.MySqlMenuDao
 import com.recipe.server.db.MySqlProfileDao
 import com.recipe.server.db.MySqlRecipeDao
+import com.recipe.server.db.MySqlUserDao
 import com.recipe.server.db.ProfileDao
 import com.recipe.server.db.RecipeDao
+import com.recipe.server.db.UserDao
 import com.recipe.server.http.HttpApi
 import com.recipe.server.http.RecipeServer
 import com.recipe.core.model.Ingredient
@@ -34,6 +37,7 @@ fun main() {
     lateinit var categoryDao: CategoryDao
     lateinit var menuDao: MenuDao
     lateinit var profileDao: ProfileDao
+    lateinit var userDao: UserDao
 
     if (config.useInMemory) {
         println("Running with in-memory data (no MySQL).")
@@ -41,6 +45,7 @@ fun main() {
         categoryDao = InMemoryCategoryDao()
         menuDao = InMemoryMenuDao()
         profileDao = InMemoryProfileDao()
+        userDao = InMemoryUserDao()
     } else {
         try {
             val conn = Db.connect(config)
@@ -50,6 +55,7 @@ fun main() {
             categoryDao.seedDefaults()
             menuDao = MySqlMenuDao(conn)
             profileDao = MySqlProfileDao(conn)
+            userDao = MySqlUserDao(conn)
             seedIfEmpty(recipeDao)
         } catch (e: Exception) {
             System.err.println("MySQL connection failed: ${e.message}")
@@ -58,10 +64,11 @@ fun main() {
             categoryDao = InMemoryCategoryDao()
             menuDao = InMemoryMenuDao()
             profileDao = InMemoryProfileDao()
+            userDao = InMemoryUserDao()
         }
     }
 
-    val api = HttpApi(config, recipeDao, menuDao, profileDao, categoryDao)
+    val api = HttpApi(config, recipeDao, menuDao, profileDao, categoryDao, userDao)
     val server = RecipeServer(config, api)
     server.start()
     println("Recipe server started at http://${config.host}:${config.port} (${System.currentTimeMillis() - start}ms)")

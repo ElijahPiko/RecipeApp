@@ -8,6 +8,6 @@ import com.recipe.app.data.AppContainer
  */
 class RecipeApplication : Application() {
     val container: AppContainer by lazy {
-        AppContainer(BuildConfig.API_BASE_URL)
+        AppContainer(applicationContext, BuildConfig.API_BASE_URL)
     }
 }

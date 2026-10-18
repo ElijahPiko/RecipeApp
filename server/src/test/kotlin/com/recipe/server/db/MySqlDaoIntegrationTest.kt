@@ -86,16 +86,16 @@ class MySqlDaoIntegrationTest {
             assertEquals(0, recipeDao.getImage(99999L)?.size ?: 0)
 
             val menuDao = MySqlMenuDao(conn)
-            val menu = menuDao.create(MenuRecord(items = listOf(OrderItem(saved.id, "水煮肉片")), totalCost = 45.0))
-            assertEquals(50.0, menuDao.updateCost(menu.id, 50.0)!!.totalCost, 0.0001)
-            assertTrue(menuDao.list().any { it.id == menu.id })
+            val menu = menuDao.create(1L, MenuRecord(items = listOf(OrderItem(saved.id, "水煮肉片")), totalCost = 45.0))
+            assertEquals(50.0, menuDao.updateCost(1L, menu.id, 50.0)!!.totalCost, 0.0001)
+            assertTrue(menuDao.list(1L).any { it.id == menu.id })
 
             val profileDao = MySqlProfileDao(conn)
-            profileDao.save(UserProfile(nickname = "测试用户", location = "上海"))
-            assertEquals("测试用户", profileDao.get().nickname)
+            profileDao.save(1L, UserProfile(nickname = "测试用户", location = "上海"))
+            assertEquals("测试用户", profileDao.get(1L).nickname)
 
             recipeDao.delete(saved.id)
-            menuDao.delete(menu.id)
+            menuDao.delete(1L, menu.id)
         } finally {
             conn.close()
         }

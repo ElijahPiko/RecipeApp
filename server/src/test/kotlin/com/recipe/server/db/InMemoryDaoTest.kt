@@ -65,19 +65,28 @@ class InMemoryDaoTest {
     }
 
     @Test
-    fun `menu dao stats and cost update`() {
+    fun `menu dao stats and cost update are scoped per user`() {
         val dao = InMemoryMenuDao()
-        val a = dao.create(MenuRecord(items = listOf(OrderItem(1, "A")), totalCost = 60.0))
-        dao.create(MenuRecord(items = listOf(OrderItem(2, "B")), totalCost = 40.0))
-        assertEquals(100.0, dao.stats().totalCost, 0.0001)
-        assertEquals(50.0, dao.stats().averageCost, 0.0001)
-        assertEquals(99.0, dao.updateCost(a.id, 99.0)!!.totalCost, 0.0001)
+        val a = dao.create(1L, MenuRecord(items = listOf(OrderItem(1, "A")), totalCost = 60.0))
+        dao.create(1L, MenuRecord(items = listOf(OrderItem(2, "B")), totalCost = 40.0))
+        assertEquals(100.0, dao.stats(1L).totalCost, 0.0001)
+        assertEquals(50.0, dao.stats(1L).averageCost, 0.0001)
+        assertEquals(99.0, dao.updateCost(1L, a.id, 99.0)!!.totalCost, 0.0001)
     }
 
     @Test
-    fun `profile dao persists`() {
+    fun `menu dao isolates users`() {
+        val dao = InMemoryMenuDao()
+        dao.create(1L, MenuRecord(items = listOf(OrderItem(1, "A")), totalCost = 60.0))
+        assertTrue(dao.list(2L).isEmpty())
+        assertEquals(1, dao.list(1L).size)
+    }
+
+    @Test
+    fun `profile dao persists per user`() {
         val dao = InMemoryProfileDao()
-        dao.save(UserProfile(nickname = "小明"))
-        assertEquals("小明", dao.get().nickname)
+        dao.save(1L, UserProfile(nickname = "小明"))
+        assertEquals("小明", dao.get(1L).nickname)
+        assertEquals("美食家", dao.get(2L).nickname)
     }
 }

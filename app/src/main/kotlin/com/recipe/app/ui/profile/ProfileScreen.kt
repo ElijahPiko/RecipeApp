@@ -31,7 +31,7 @@ import com.recipe.app.viewmodel.ProfileViewModel
 import com.recipe.core.model.Category
 
 @Composable
-fun ProfileScreen(viewModel: ProfileViewModel) {
+fun ProfileScreen(viewModel: ProfileViewModel, onLogout: (() -> Unit)? = null) {
     val state by viewModel.uiState.collectAsState()
     val profile = state.profile
 
@@ -78,6 +78,15 @@ fun ProfileScreen(viewModel: ProfileViewModel) {
             enabled = !state.loading
         ) {
             Text("保存资料")
+        }
+
+        if (onLogout != null) {
+            TextButton(
+                onClick = onLogout,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("退出登录", color = MaterialTheme.colorScheme.error)
+            }
         }
 
         Text("分类管理", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(top = 8.dp))

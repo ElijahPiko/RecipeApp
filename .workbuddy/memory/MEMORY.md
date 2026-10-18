@@ -61,3 +61,12 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
   根因：`Main.kt` 把**单个 JDBC Connection 共享**给所有 DAO，而 `HttpApi` 是 8 线程固定池；
   JDBC Connection 非线程安全，且 `wait_timeout` 断连后无重连机制 → 永久 500。
   修法：每请求获取 Connection，或引入连接池 + 探活重连。
+
+## 认证体系（2026-10-18 建立）
+- 注册/登录：`POST /api/auth/register|login`，返回 Bearer token；`me`/`logout` 同组
+- 其余 `/api/**` 一律要 `Authorization: Bearer <token>`，图片 GET 除外（Coil 无法带 header）
+- 密码 PBKDF2（12 万迭代+随机盐）存 `users` 表；token 存 `users.token`
+- 数据隔离：recipes/categories 全局共享；menu_record/profile 按 user_id 隔离
+- 客户端：TokenStore(SharedPreferences) → RecipeApi tokenProvider 动态注入头
+- App 启动流程：无 token → AuthScreen；登录/注册成功 → 主界面；个人页可退出登录
+- **改 MenuDao/ProfileDao 接口签名时必须带 userId 参数**（多用户隔离是硬约束）

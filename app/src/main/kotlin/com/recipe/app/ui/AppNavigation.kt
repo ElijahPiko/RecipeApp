@@ -12,6 +12,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -24,6 +27,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.recipe.app.RecipeApplication
 import com.recipe.app.data.AppContainer
+import com.recipe.app.ui.auth.AuthScreen
 import com.recipe.app.ui.menu.MenusScreen
 import com.recipe.app.ui.order.OrderScreen
 import com.recipe.app.ui.profile.ProfileScreen
@@ -45,6 +49,22 @@ private object Routes {
 
 @Composable
 fun AppNavigation(container: AppContainer) {
+    // Session state: no stored token -> start at the auth screen.
+    var loggedIn by rememberSaveable { mutableStateOf(container.tokenStore.hasToken()) }
+
+    if (!loggedIn) {
+        AuthScreen(container = container, onSuccess = { loggedIn = true })
+        return
+    }
+
+    MainScaffold(container = container, onLoggedOut = { loggedIn = false })
+}
+
+/**
+ * The tabbed main UI. Extracted so the auth gate above stays trivial to follow.
+ */
+@Composable
+private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -82,7 +102,13 @@ fun AppNavigation(container: AppContainer) {
                 val vm = viewModel<ProfileViewModel>(factory = viewModelFactory {
                     initializer { ProfileViewModel(container.profileRepository, container.recipeRepository) }
                 })
-                ProfileScreen(viewModel = vm)
+                ProfileScreen(
+                    viewModel = vm,
+                    onLogout = {
+                        container.tokenStore.clear()
+                        onLoggedOut()
+                    }
+                )
             }
             composable(Routes.ORDER) {
                 val vm = viewModel<OrderViewModel>(factory = viewModelFactory {

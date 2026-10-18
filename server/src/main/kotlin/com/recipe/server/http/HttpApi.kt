@@ -1,12 +1,16 @@
 package com.recipe.server.http
 
+import com.recipe.core.model.AuthResponse
+import com.recipe.core.model.AuthUser
 import com.recipe.core.model.Category
 import com.recipe.server.ServerConfig
+import com.recipe.server.auth.PasswordHasher
 import com.recipe.server.db.CategoryDao
 import com.recipe.server.db.JsonHolder
 import com.recipe.server.db.MenuDao
 import com.recipe.server.db.ProfileDao
 import com.recipe.server.db.RecipeDao
+import com.recipe.server.db.UserDao
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayOutputStream
@@ -17,6 +21,15 @@ import java.util.concurrent.Executors
 /**
  * The REST API. Exposes JSON endpoints backed by the DAOs.
  *
+ * Authentication model:
+ *  - `POST /api/auth/register` and `POST /api/auth/login` are public and return a session token.
+ *  - Every other `/api/...` request requires `Authorization: Bearer <token>`; anything else gets 401.
+ *  - `GET /api/recipes/{id}/image` stays public because the client's image loader (Coil)
+ *    cannot attach headers conveniently, and recipe images are shared data anyway.
+ *
+ * Data scope: recipes and categories are shared across users; menu records and the
+ * profile are private and always resolved against the token's user id.
+ *
  * Recipe images are stored as BLOBs in MySQL (max 16 MB) and served from
  * `/api/recipes/{id}/image`. The Recipe JSON exposes a client-facing `imageUrl`
  * that points to that endpoint when the recipe has an image.
@@ -26,46 +39,35 @@ class HttpApi(
     private val recipeDao: RecipeDao,
     private val menuDao: MenuDao,
     private val profileDao: ProfileDao,
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val userDao: UserDao
 ) {
 
     companion object {
         private const val MAX_IMAGE_BYTES = 16 * 1024 * 1024
+        private val IMAGE_PATH = Regex("/api/recipes/[0-9]+/image")
     }
 
     fun handle(exchange: HttpExchange) {
         try {
             val method = exchange.requestMethod
             val path = exchange.requestURI.path
+
+            // Public endpoints: auth and image downloads (Coil cannot attach headers).
             val response: Response = when {
-                path == "/api/recipes" && method == "GET" -> listRecipes(exchange)
-                path == "/api/recipes" && method == "POST" -> createRecipe(exchange)
-                path == "/api/categories" && method == "GET" -> categories()
-                path == "/api/categories" && method == "POST" -> createCategory(exchange)
-                path.matches(Regex("/api/categories/[0-9]+")) && method == "PUT" -> updateCategory(exchange)
-                path.matches(Regex("/api/categories/[0-9]+")) && method == "DELETE" -> deleteCategory(exchange)
-                path == "/api/menus" && method == "GET" -> listMenus()
-                path == "/api/menus/stats" && method == "GET" -> menuStats()
-                path == "/api/menus" && method == "POST" -> createMenu(exchange)
-                path == "/api/profile" && method == "GET" -> getProfile()
-                path == "/api/profile" && method == "PUT" -> saveProfile(exchange)
-                path.matches(Regex("/api/recipes/[0-9]+/image")) && method == "POST" -> uploadRecipeImage(exchange)
-                path.matches(Regex("/api/recipes/[0-9]+/image")) && method == "GET" -> serveRecipeImage(exchange)
-                path.matches(Regex("/api/recipes/[0-9]+")) &&
-                    (method == "GET" || method == "PUT" || method == "DELETE") -> recipeById(exchange, method)
-                path.matches(Regex("/api/menus/[0-9]+")) &&
-                    (method == "PUT" || method == "DELETE") -> menuById(exchange, method)
-                else -> Response(404, JsonHolder.gson.toJson(mapOf("error" to "not found")))
+                path == "/api/auth/register" && method == "POST" -> register(exchange)
+                path == "/api/auth/login" && method == "POST" -> login(exchange)
+                path == "/api/auth/me" && method == "GET" -> me(exchange)
+                path == "/api/auth/logout" && method == "POST" -> logout(exchange)
+                IMAGE_PATH.matches(path) && method == "GET" -> serveRecipeImage(exchange)
+                else -> {
+                    // Everything else requires a valid Bearer token.
+                    val user = authenticate(exchange)
+                        ?: return send(exchange, Response(401, JsonHolder.gson.toJson(mapOf("error" to "未登录或登录已过期"))))
+                    authorized(exchange, method, path, user)
+                }
             }
-            if (response.raw != null) {
-                exchange.sendResponseHeaders(response.status, response.raw.size.toLong())
-                exchange.responseBody.use { it.write(response.raw) }
-            } else {
-                val bytes = response.body.toByteArray(StandardCharsets.UTF_8)
-                exchange.responseHeaders.set("Content-Type", "application/json; charset=utf-8")
-                exchange.sendResponseHeaders(response.status, bytes.size.toLong())
-                exchange.responseBody.use { it.write(bytes) }
-            }
+            send(exchange, response)
         } catch (e: Exception) {
             e.printStackTrace()
             val msg = JsonHolder.gson.toJson(mapOf("error" to (e.message ?: e.javaClass.simpleName)))
@@ -77,6 +79,106 @@ class HttpApi(
         } finally {
             exchange.close()
         }
+    }
+
+    /** Routes that run with an authenticated user id attached. */
+    private fun authorized(exchange: HttpExchange, method: String, path: String, userId: Long): Response = when {
+        path == "/api/recipes" && method == "GET" -> listRecipes(exchange)
+        path == "/api/recipes" && method == "POST" -> createRecipe(exchange)
+        path == "/api/categories" && method == "GET" -> categories()
+        path == "/api/categories" && method == "POST" -> createCategory(exchange)
+        path.matches(Regex("/api/categories/[0-9]+")) && method == "PUT" -> updateCategory(exchange)
+        path.matches(Regex("/api/categories/[0-9]+")) && method == "DELETE" -> deleteCategory(exchange)
+        path == "/api/menus" && method == "GET" -> listMenus(userId)
+        path == "/api/menus/stats" && method == "GET" -> menuStats(userId)
+        path == "/api/menus" && method == "POST" -> createMenu(exchange, userId)
+        path == "/api/profile" && method == "GET" -> getProfile(userId)
+        path == "/api/profile" && method == "PUT" -> saveProfile(exchange, userId)
+        IMAGE_PATH.matches(path) && method == "POST" -> uploadRecipeImage(exchange)
+        path.matches(Regex("/api/recipes/[0-9]+")) &&
+            (method == "GET" || method == "PUT" || method == "DELETE") -> recipeById(exchange, method)
+        path.matches(Regex("/api/menus/[0-9]+")) &&
+            (method == "PUT" || method == "DELETE") -> menuById(exchange, method, userId)
+        else -> Response(404, JsonHolder.gson.toJson(mapOf("error" to "not found")))
+    }
+
+    private fun send(exchange: HttpExchange, response: Response) {
+        if (response.raw != null) {
+            exchange.sendResponseHeaders(response.status, response.raw.size.toLong())
+            exchange.responseBody.use { it.write(response.raw) }
+        } else {
+            val bytes = response.body.toByteArray(StandardCharsets.UTF_8)
+            exchange.responseHeaders.set("Content-Type", "application/json; charset=utf-8")
+            exchange.sendResponseHeaders(response.status, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+    }
+
+    // ---- Auth ----
+    private data class Credentials(val username: String?, val password: String?, val nickname: String?)
+
+    private fun readCredentials(exchange: HttpExchange): Credentials =
+        JsonHolder.gson.fromJson(readBody(exchange), Credentials::class.java)
+
+    private fun register(exchange: HttpExchange): Response {
+        val cred = readCredentials(exchange)
+        val username = cred.username?.trim().orEmpty()
+        val password = cred.password.orEmpty()
+        if (username.isBlank() || password.isBlank()) {
+            return Response(400, JsonHolder.gson.toJson(mapOf("error" to "用户名和密码不能为空")))
+        }
+        if (username.length < 3 || username.length > 32) {
+            return Response(400, JsonHolder.gson.toJson(mapOf("error" to "用户名长度需在 3-32 个字符之间")))
+        }
+        if (password.length < 6) {
+            return Response(400, JsonHolder.gson.toJson(mapOf("error" to "密码至少需要 6 位")))
+        }
+        val user = userDao.create(username, password, cred.nickname?.trim().orEmpty())
+            ?: return Response(409, JsonHolder.gson.toJson(mapOf("error" to "用户名已被占用")))
+        return sessionResponse(user)
+    }
+
+    private fun login(exchange: HttpExchange): Response {
+        val cred = readCredentials(exchange)
+        val user = cred.username?.trim()?.let { userDao.findByUsername(it) }
+        // Same generic message for both cases so the endpoint cannot be used to probe usernames.
+        if (user == null || !PasswordHasher.verify(cred.password.orEmpty(), user.salt, user.passwordHash)) {
+            return Response(401, JsonHolder.gson.toJson(mapOf("error" to "用户名或密码错误")))
+        }
+        return sessionResponse(user)
+    }
+
+    private fun me(exchange: HttpExchange): Response {
+        val token = bearerToken(exchange)
+            ?: return Response(401, JsonHolder.gson.toJson(mapOf("error" to "未登录或登录已过期")))
+        val user = userDao.findByToken(token)
+            ?: return Response(401, JsonHolder.gson.toJson(mapOf("error" to "未登录或登录已过期")))
+        return Response(200, JsonHolder.gson.toJson(AuthUser(user.id, user.username, user.nickname)))
+    }
+
+    private fun logout(exchange: HttpExchange): Response {
+        val token = bearerToken(exchange)
+        if (token != null) {
+            userDao.findByToken(token)?.let { userDao.saveToken(it.id, null) }
+        }
+        return Response(200, JsonHolder.gson.toJson(mapOf("ok" to true)))
+    }
+
+    /** Validates the Bearer token and returns the user id, or null. */
+    private fun authenticate(exchange: HttpExchange): Long? {
+        val token = bearerToken(exchange) ?: return null
+        return userDao.findByToken(token)?.id
+    }
+
+    private fun bearerToken(exchange: HttpExchange): String? {
+        val header = exchange.requestHeaders.getFirst("Authorization") ?: return null
+        return if (header.startsWith("Bearer ", ignoreCase = true)) header.substring(7).trim().takeIf { it.isNotEmpty() } else null
+    }
+
+    private fun sessionResponse(user: com.recipe.server.db.UserRow): Response {
+        val token = PasswordHasher.newToken()
+        userDao.saveToken(user.id, token)
+        return Response(200, JsonHolder.gson.toJson(AuthResponse(token, AuthUser(user.id, user.username, user.nickname))))
     }
 
     // ---- Recipes ----
@@ -149,38 +251,39 @@ class HttpApi(
     }
 
     // ---- Menus ----
-    private fun listMenus(): Response = Response(200, JsonHolder.gson.toJson(menuDao.list()))
-    private fun menuStats(): Response = Response(200, JsonHolder.gson.toJson(menuDao.stats()))
+    private fun listMenus(userId: Long): Response = Response(200, JsonHolder.gson.toJson(menuDao.list(userId)))
+    private fun menuStats(userId: Long): Response = Response(200, JsonHolder.gson.toJson(menuDao.stats(userId)))
 
-    private fun createMenu(exchange: HttpExchange): Response {
+    private fun createMenu(exchange: HttpExchange, userId: Long): Response {
         val record = JsonHolder.gson.fromJson<com.recipe.core.model.MenuRecord>(readBody(exchange), com.recipe.core.model.MenuRecord::class.java)
-        val saved = menuDao.create(record)
+        val saved = menuDao.create(userId, record)
         return Response(200, JsonHolder.gson.toJson(saved))
     }
 
-    private fun menuById(exchange: HttpExchange, method: String): Response {
+    private fun menuById(exchange: HttpExchange, method: String, userId: Long): Response {
         val id = exchange.requestURI.path.substringAfterLast('/').toLongOrNull()
             ?: return Response(400, JsonHolder.gson.toJson(mapOf("error" to "invalid id")))
         return when (method) {
             "PUT" -> {
                 val body = JsonHolder.gson.fromJson<com.recipe.core.model.MenuRecord>(readBody(exchange), com.recipe.core.model.MenuRecord::class.java)
-                val updated = menuDao.updateCost(id, body.totalCost)
+                val updated = menuDao.updateCost(userId, id, body.totalCost)
                 updated?.let { Response(200, JsonHolder.gson.toJson(it)) }
                     ?: Response(404, JsonHolder.gson.toJson(mapOf("error" to "not found")))
             }
             else -> {
-                menuDao.delete(id)
+                menuDao.delete(userId, id)
                 Response(200, "{}")
             }
         }
     }
 
     // ---- Profile ----
-    private fun getProfile(): Response = Response(200, JsonHolder.gson.toJson(profileDao.get()))
+    private fun getProfile(userId: Long): Response =
+        Response(200, JsonHolder.gson.toJson(profileDao.get(userId)))
 
-    private fun saveProfile(exchange: HttpExchange): Response {
+    private fun saveProfile(exchange: HttpExchange, userId: Long): Response {
         val profile = JsonHolder.gson.fromJson<com.recipe.core.model.UserProfile>(readBody(exchange), com.recipe.core.model.UserProfile::class.java)
-        return Response(200, JsonHolder.gson.toJson(profileDao.save(profile)))
+        return Response(200, JsonHolder.gson.toJson(profileDao.save(userId, profile)))
     }
 
     // ---- Recipe images (BLOB storage) ----

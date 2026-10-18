@@ -6,20 +6,25 @@ import com.recipe.core.model.MenuRecord
 import com.recipe.core.model.OrderItem
 import java.sql.Connection
 
+/**
+ * Menu records are private per user: every method is scoped by [MenuDao.userId]-style
+ * parameters so one account can never see or mutate another's history.
+ */
 interface MenuDao {
-    fun list(): List<MenuRecord>
-    fun stats(): MenuStats
-    fun create(record: MenuRecord): MenuRecord
-    fun updateCost(id: Long, totalCost: Double): MenuRecord?
-    fun delete(id: Long)
+    fun list(userId: Long): List<MenuRecord>
+    fun stats(userId: Long): MenuStats
+    fun create(userId: Long, record: MenuRecord): MenuRecord
+    fun updateCost(userId: Long, id: Long, totalCost: Double): MenuRecord?
+    fun delete(userId: Long, id: Long)
 }
 
 class MySqlMenuDao(private val connection: Connection) : MenuDao {
 
-    override fun list(): List<MenuRecord> =
+    override fun list(userId: Long): List<MenuRecord> =
         connection.prepareStatement(
-            "SELECT id, created_at, items, total_cost, note FROM menu_record ORDER BY created_at DESC"
+            "SELECT id, created_at, items, total_cost, note FROM menu_record WHERE user_id = ? ORDER BY created_at DESC"
         ).use { ps ->
+            ps.setLong(1, userId)
             ps.executeQuery().use { rs ->
                 val out = mutableListOf<MenuRecord>()
                 while (rs.next()) {
@@ -37,19 +42,20 @@ class MySqlMenuDao(private val connection: Connection) : MenuDao {
             }
         }
 
-    override fun stats(): MenuStats = MenuStatsCalculator.calculate(list())
+    override fun stats(userId: Long): MenuStats = MenuStatsCalculator.calculate(list(userId))
 
-    override fun create(record: MenuRecord): MenuRecord {
+    override fun create(userId: Long, record: MenuRecord): MenuRecord {
         val gson = JsonHolder.gson
         return if (record.id == 0L) {
             connection.prepareStatement(
-                "INSERT INTO menu_record (created_at, items, total_cost, note) VALUES (?, ?, ?, ?)",
+                "INSERT INTO menu_record (user_id, created_at, items, total_cost, note) VALUES (?, ?, ?, ?, ?)",
                 java.sql.Statement.RETURN_GENERATED_KEYS
             ).use { ps ->
-                ps.setLong(1, record.createdAt)
-                ps.setString(2, gson.toJson(record.items))
-                ps.setDouble(3, record.totalCost)
-                ps.setString(4, record.note)
+                ps.setLong(1, userId)
+                ps.setLong(2, record.createdAt)
+                ps.setString(3, gson.toJson(record.items))
+                ps.setDouble(4, record.totalCost)
+                ps.setString(5, record.note)
                 ps.executeUpdate()
                 val id = ps.generatedKeys.use { keys -> if (keys.next()) keys.getLong(1) else 0L }
                 record.copy(id = id)
@@ -59,19 +65,23 @@ class MySqlMenuDao(private val connection: Connection) : MenuDao {
         }
     }
 
-    override fun updateCost(id: Long, totalCost: Double): MenuRecord? {
-        val rows = connection.prepareStatement("UPDATE menu_record SET total_cost = ? WHERE id = ?").use { ps ->
+    override fun updateCost(userId: Long, id: Long, totalCost: Double): MenuRecord? {
+        val rows = connection.prepareStatement(
+            "UPDATE menu_record SET total_cost = ? WHERE id = ? AND user_id = ?"
+        ).use { ps ->
             ps.setDouble(1, totalCost)
             ps.setLong(2, id)
+            ps.setLong(3, userId)
             ps.executeUpdate()
         }
         if (rows == 0) return null
-        return list().find { it.id == id }
+        return list(userId).find { it.id == id }
     }
 
-    override fun delete(id: Long) {
-        connection.prepareStatement("DELETE FROM menu_record WHERE id = ?").use { ps ->
+    override fun delete(userId: Long, id: Long) {
+        connection.prepareStatement("DELETE FROM menu_record WHERE id = ? AND user_id = ?").use { ps ->
             ps.setLong(1, id)
+            ps.setLong(2, userId)
             ps.executeUpdate()
         }
     }

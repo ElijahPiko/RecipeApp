@@ -63,17 +63,49 @@ object Db {
             )
             st.execute(
                 "CREATE TABLE IF NOT EXISTS profile (" +
-                    "id BIGINT PRIMARY KEY," +
+                    "user_id BIGINT PRIMARY KEY," +
                     "nickname VARCHAR(128)," +
                     "avatar_url TEXT," +
                     "signature VARCHAR(255)," +
                     "location VARCHAR(128)," +
                     "favorite_category VARCHAR(64))"
             )
+            st.execute(
+                "CREATE TABLE IF NOT EXISTS users (" +
+                    "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
+                    "username VARCHAR(64) NOT NULL UNIQUE," +
+                    "password_hash VARCHAR(255) NOT NULL," +
+                    "salt VARCHAR(64) NOT NULL," +
+                    "nickname VARCHAR(128)," +
+                    "token VARCHAR(64)," +
+                    "created_at BIGINT NOT NULL)"
+            )
         }
         // Migrate existing databases created before image_data existed (images were stored as URLs).
         if (!columnExists("recipe", "image_data")) {
             createStatement().use { it.execute("ALTER TABLE recipe ADD COLUMN image_data MEDIUMBLOB") }
+        }
+        // Multi-user migration: menu records and profiles become per-user.
+        if (!columnExists("menu_record", "user_id")) {
+            createStatement().use {
+                it.execute("ALTER TABLE menu_record ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0")
+            }
+        }
+        if (!columnExists("profile", "user_id")) {
+            createStatement().use {
+                it.execute("ALTER TABLE profile ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0")
+            }
+        }
+        // Legacy profile tables were keyed by `id` (fixed row id=1) and cannot accept
+        // per-user inserts. Rebuild the key around user_id; the old single row holds
+        // only default values, so dropping it loses nothing.
+        if (columnExists("profile", "id")) {
+            createStatement().use { st ->
+                st.execute("ALTER TABLE profile DROP PRIMARY KEY")
+                st.execute("ALTER TABLE profile DROP COLUMN id")
+                st.execute("DELETE FROM profile WHERE user_id = 0")
+                st.execute("ALTER TABLE profile ADD PRIMARY KEY (user_id)")
+            }
         }
     }
 
