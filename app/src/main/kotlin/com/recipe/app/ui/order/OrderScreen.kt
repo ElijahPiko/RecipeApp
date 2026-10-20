@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +53,16 @@ fun OrderScreen(
     val state by viewModel.uiState.collectAsState()
     var showIngredients by remember { mutableStateOf(false) }
 
-    if (state.confirmed) {
-        onConfirmed()
-        return
+    // Navigate from a coroutine, not during composition: calling onConfirmed() directly
+    // inside the composable body runs navController.navigate() mid-composition and
+    // repeatedly on every recomposition (confirmed stays true during the transition),
+    // which corrupts the NavController's back stack state — afterwards, tab navigation
+    // back to 菜谱 silently becomes a no-op.
+    LaunchedEffect(state.confirmed) {
+        if (state.confirmed) {
+            onConfirmed()
+            viewModel.resetConfirmed()
+        }
     }
 
     Scaffold(

@@ -70,3 +70,10 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 - 客户端：TokenStore(SharedPreferences) → RecipeApi tokenProvider 动态注入头
 - App 启动流程：无 token → AuthScreen；登录/注册成功 → 主界面；个人页可退出登录
 - **改 MenuDao/ProfileDao 接口签名时必须带 userId 参数**（多用户隔离是硬约束）
+
+## 导航约定（2026-10-20 建立）
+- BottomBar tab 切换：`popUpTo(startDestinationId) + launchSingleTop`，**禁止 restoreState=true**
+  （与临时页进出组合会让 tab 导航变成"恢复错误栈段"，表现为 tab 点不动）
+- 临时页（ORDER/NEW_RECIPE）无底栏（isTab=false），退出靠返回键或干净 popBackStack
+- ORDER 下单跳转：`popBackStack(RECIPES, false)` + `navigate(MENUS){launchSingleTop}`
+- OrderScreen 的 confirmed 导航必须走 LaunchedEffect，禁止组合期直接调 onConfirmed()

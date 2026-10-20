@@ -118,8 +118,10 @@ private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
                     viewModel = vm,
                     onBack = { navController.popBackStack() },
                     onConfirmed = {
+                        // Discard the order page cleanly, then go to 菜单. Keep these
+                        // options plain: no popUpTo-with-saveState games here.
+                        navController.popBackStack(Routes.RECIPES, inclusive = false)
                         navController.navigate(Routes.MENUS) {
-                            popUpTo(Routes.RECIPES) { inclusive = false }
                             launchSingleTop = true
                         }
                     }
@@ -153,9 +155,14 @@ private fun BottomBar(navController: NavHostController, currentRoute: String?) {
                 onClick = {
                     if (currentRoute != route) {
                         navController.navigate(route) {
-                            popUpTo(navController.graph.startDestinationId) { saveState = true }
+                            // Deliberately NO restoreState here. With restoreState=true,
+                            // after visiting a non-tab page (点菜/新建菜谱) once, tapping the
+                            // 菜谱 tab would "restore" a previously saved stack segment
+                            // instead of navigating — the tab appeared completely dead.
+                            // Plain popUpTo + launchSingleTop keeps the semantics simple and
+                            // predictable: every tab switch lands on that tab's root page.
+                            popUpTo(navController.graph.startDestinationId)
                             launchSingleTop = true
-                            restoreState = true
                         }
                     }
                 },
