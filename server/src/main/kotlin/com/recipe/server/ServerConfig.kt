@@ -18,13 +18,43 @@ import java.util.Properties
 data class ServerConfig(
     val host: String = resolve("server.host", "RECIPE_SERVER_HOST", "0.0.0.0"),
     val port: Int = resolve("server.port", "RECIPE_SERVER_PORT", "8080").toInt(),
+    /**
+     * HTTP worker threads. Keep it in step with `db.pool.maxSize`: every request holds at
+     * most one pooled connection, so a much larger thread count only queues on checkout.
+     */
+    val serverThreads: Int = resolve("server.threads", "RECIPE_SERVER_THREADS", "8").toInt(),
     val dbHost: String = resolve("db.host", "RECIPE_DB_HOST", "127.0.0.1"),
     val dbPort: Int = resolve("db.port", "RECIPE_DB_PORT", "3306").toInt(),
     val dbName: String = resolve("db.name", "RECIPE_DB_NAME", "recipe_app"),
     val dbUser: String = resolve("db.user", "RECIPE_DB_USER", "root"),
     val dbPassword: String = resolve("db.password", "RECIPE_DB_PASSWORD", "123456"),
     val uploadDir: String = resolve("upload.dir", "RECIPE_UPLOAD_DIR", defaultUploadDir()),
-    val useInMemory: Boolean = resolve("db.inMemory", "RECIPE_IN_MEMORY", "false").toBoolean()
+    val useInMemory: Boolean = resolve("db.inMemory", "RECIPE_IN_MEMORY", "false").toBoolean(),
+
+    // ---- Connection pool (HikariCP) ----
+    /** Upper bound on simultaneously borrowed connections; keep it close to the HTTP worker count. */
+    val dbPoolMaxSize: Int = resolve("db.pool.maxSize", "RECIPE_DB_POOL_MAX_SIZE", "10").toInt(),
+    /** Connections kept warm when idle. */
+    val dbPoolMinIdle: Int = resolve("db.pool.minIdle", "RECIPE_DB_POOL_MIN_IDLE", "2").toInt(),
+    /** How long a request waits for a free connection before failing. */
+    val dbPoolConnectionTimeoutMs: Long =
+        resolve("db.pool.connectionTimeoutMs", "RECIPE_DB_POOL_CONNECTION_TIMEOUT_MS", "5000").toLong(),
+    /**
+     * Hard cap on a connection's age. MUST stay below MySQL's `wait_timeout`
+     * (default 28800s / 8h), otherwise the server kills connections the pool
+     * still believes are healthy — exactly the failure this pool exists to stop.
+     */
+    val dbPoolMaxLifetimeMs: Long =
+        resolve("db.pool.maxLifetimeMs", "RECIPE_DB_POOL_MAX_LIFETIME_MS", "1500000").toLong(),
+    /** Idle connections beyond [dbPoolMinIdle] are closed after this long. */
+    val dbPoolIdleTimeoutMs: Long =
+        resolve("db.pool.idleTimeoutMs", "RECIPE_DB_POOL_IDLE_TIMEOUT_MS", "600000").toLong(),
+    /**
+     * Background ping interval that keeps idle connections from being reaped by
+     * MySQL / NAT `wait_timeout`. Set to 0 to disable.
+     */
+    val dbPoolKeepaliveMs: Long =
+        resolve("db.pool.keepaliveMs", "RECIPE_DB_POOL_KEEPALIVE_MS", "120000").toLong()
 ) {
     /** Which configuration file was actually used, for startup logging. */
     val sourceDescription: String get() = RecipeConfigFile.describe()

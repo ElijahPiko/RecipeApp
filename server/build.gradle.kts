@@ -36,6 +36,11 @@ dependencies {
         exclude(group = "com.oracle.oci.sdk")
         exclude(group = "com.google.protobuf")
     }
+    // Connection pool: borrow a connection per call instead of sharing one across all threads.
+    implementation(libs.hikaricp)
+    implementation(libs.slf4j.api)
+    // HikariCP logs through SLF4J; this binding prints pool lifecycle to stderr.
+    runtimeOnly(libs.slf4j.simple)
     testImplementation(libs.junit)
     testImplementation(libs.hamcrest.core)
     testImplementation(libs.coroutines.test)

@@ -1,6 +1,7 @@
 package com.recipe.server.http
 
 import com.recipe.server.ServerConfig
+import com.recipe.server.db.HealthSource
 import com.recipe.server.db.InMemoryCategoryDao
 import com.recipe.server.db.InMemoryMenuDao
 import com.recipe.server.db.InMemoryProfileDao
@@ -319,6 +320,45 @@ class HttpApiServerTest {
     @Test
     fun `unhandled route returns 404`() {
         assertEquals(404, request("GET", "/api/nope").first)
+    }
+
+    // ---- Health ----
+
+    @Test
+    fun `health endpoint needs no token and reports in-memory storage`() {
+        val (code, body) = request("GET", "/api/health", auth = null)
+        assertEquals(200, code)
+        assertTrue(body.contains("\"status\":\"ok\""))
+        assertTrue(body.contains("in-memory"))
+    }
+
+    @Test
+    fun `health endpoint returns 503 when the database probe fails`() {
+        val p = freePort()
+        val config = ServerConfig(host = "127.0.0.1", port = p)
+        val api = HttpApi(
+            config,
+            InMemoryRecipeDao(), InMemoryMenuDao(), InMemoryProfileDao(), InMemoryCategoryDao(), InMemoryUserDao(),
+            object : HealthSource {
+                override fun ping(): Boolean = false
+                override fun stats(): Map<String, Int> = mapOf("active" to 0, "idle" to 0, "total" to 0)
+            }
+        )
+        val probeServer = RecipeServer(config, api)
+        probeServer.start()
+        try {
+            val conn = URL("http://127.0.0.1:$p/api/health")
+                .openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            assertEquals(503, conn.responseCode)
+            val body = conn.errorStream.readBytes().toString(StandardCharsets.UTF_8)
+            assertTrue(body.contains("\"db\":\"down\""))
+            assertTrue(body.contains("\"status\":\"degraded\""))
+            conn.disconnect()
+        } finally {
+            probeServer.stop()
+        }
     }
 
     private fun gsonRecipe(name: String): String =

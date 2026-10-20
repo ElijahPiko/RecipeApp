@@ -6,6 +6,7 @@ import com.recipe.core.model.Category
 import com.recipe.server.ServerConfig
 import com.recipe.server.auth.PasswordHasher
 import com.recipe.server.db.CategoryDao
+import com.recipe.server.db.HealthSource
 import com.recipe.server.db.JsonHolder
 import com.recipe.server.db.MenuDao
 import com.recipe.server.db.ProfileDao
@@ -26,6 +27,8 @@ import java.util.concurrent.Executors
  *  - Every other `/api/...` request requires `Authorization: Bearer <token>`; anything else gets 401.
  *  - `GET /api/recipes/{id}/image` stays public because the client's image loader (Coil)
  *    cannot attach headers conveniently, and recipe images are shared data anyway.
+ *  - `GET /api/health` stays public so an external watchdog can probe the service without
+ *    holding credentials. It returns 200 when the database answers and 503 when it does not.
  *
  * Data scope: recipes and categories are shared across users; menu records and the
  * profile are private and always resolved against the token's user id.
@@ -40,8 +43,12 @@ class HttpApi(
     private val menuDao: MenuDao,
     private val profileDao: ProfileDao,
     private val categoryDao: CategoryDao,
-    private val userDao: UserDao
+    private val userDao: UserDao,
+    /** Null when running on in-memory storage. */
+    private val health: HealthSource? = null
 ) {
+
+    private val startedAt = System.currentTimeMillis()
 
     companion object {
         private const val MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -53,12 +60,13 @@ class HttpApi(
             val method = exchange.requestMethod
             val path = exchange.requestURI.path
 
-            // Public endpoints: auth and image downloads (Coil cannot attach headers).
+            // Public endpoints: auth, health probe and image downloads (Coil cannot attach headers).
             val response: Response = when {
                 path == "/api/auth/register" && method == "POST" -> register(exchange)
                 path == "/api/auth/login" && method == "POST" -> login(exchange)
                 path == "/api/auth/me" && method == "GET" -> me(exchange)
                 path == "/api/auth/logout" && method == "POST" -> logout(exchange)
+                path == "/api/health" && method == "GET" -> health()
                 IMAGE_PATH.matches(path) && method == "GET" -> serveRecipeImage(exchange)
                 else -> {
                     // Everything else requires a valid Bearer token.
@@ -179,6 +187,31 @@ class HttpApi(
         val token = PasswordHasher.newToken()
         userDao.saveToken(user.id, token)
         return Response(200, JsonHolder.gson.toJson(AuthResponse(token, AuthUser(user.id, user.username, user.nickname))))
+    }
+
+    // ---- Health ----
+
+    /**
+     * Liveness/readiness probe for external watchdogs.
+     *
+     * 200 = service and database both usable, 503 = service is up but the database is not.
+     * Deliberately unauthenticated and free of user data, so the probe needs no credentials.
+     */
+    private fun health(): Response {
+        val uptime = System.currentTimeMillis() - startedAt
+        val source = health
+            ?: return Response(
+                200,
+                JsonHolder.gson.toJson(linkedMapOf("status" to "ok", "db" to "in-memory", "uptimeMs" to uptime))
+            )
+        val up = source.ping()
+        val body = linkedMapOf<String, Any>(
+            "status" to if (up) "ok" else "degraded",
+            "db" to if (up) "up" else "down",
+            "pool" to source.stats(),
+            "uptimeMs" to uptime
+        )
+        return Response(if (up) 200 else 503, JsonHolder.gson.toJson(body))
     }
 
     // ---- Recipes ----
@@ -380,7 +413,7 @@ class RecipeServer(
 
     fun start() {
         val http = HttpServer.create(InetSocketAddress(config.host, config.port), 0)
-        http.executor = Executors.newFixedThreadPool(8)
+        http.executor = Executors.newFixedThreadPool(config.serverThreads.coerceAtLeast(1))
         http.createContext("/") { api.handle(it) }
         http.start()
         server = http

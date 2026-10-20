@@ -66,6 +66,38 @@ Recipe/
 表结构由 [server/src/main/kotlin/com/recipe/server/db/Db.kt](server/src/main/kotlin/com/recipe/server/db/Db.kt)
 自动初始化。
 
+### 连接池（HikariCP）
+
+后端通过 **HikariCP** 连接池访问 MySQL（见
+[ConnectionProvider.kt](server/src/main/kotlin/com/recipe/server/db/ConnectionProvider.kt)）。
+DAO 每次调用**借一条连接、用完立刻归还**，不再持有单条 `Connection`。
+
+> 早期版本把同一条 `Connection` 注入给所有 DAO，并由 8 个 HTTP 工作线程并发共用。
+> 一旦 MySQL 的 `wait_timeout` 回收了这条连接，驱动会把它永久标记为 closed，
+> 之后所有请求都会抛 `ConnectionIsClosedException: No operations allowed after connection closed`
+> 且无法自愈 —— 表现就是「进程还活着，但所有接口都 500」。
+
+池的关键参数（括号内为环境变量）：
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `db.pool.maxSize` (`RECIPE_DB_POOL_MAX_SIZE`) | `10` | 最大连接数，与 HTTP 工作线程数（8）相当 |
+| `db.pool.minIdle` (`RECIPE_DB_POOL_MIN_IDLE`) | `2` | 常驻空闲连接数 |
+| `db.pool.connectionTimeoutMs` (`RECIPE_DB_POOL_CONNECTION_TIMEOUT_MS`) | `5000` | 借连接的最长等待时间 |
+| `db.pool.maxLifetimeMs` (`RECIPE_DB_POOL_MAX_LIFETIME_MS`) | `1500000` (25 分钟) | **必须小于 MySQL `wait_timeout`**，由池主动淘汰旧连接 |
+| `db.pool.idleTimeoutMs` (`RECIPE_DB_POOL_IDLE_TIMEOUT_MS`) | `600000` (10 分钟) | 超出 `minIdle` 的空闲连接存活时间 |
+| `db.pool.keepaliveMs` (`RECIPE_DB_POOL_KEEPALIVE_MS`) | `120000` (2 分钟) | 空闲连接探活间隔，`0` 关闭 |
+
+启动日志会打印实际生效值：
+
+```
+Connected to MySQL 127.0.0.1:3306/recipe_app.
+Connection pool=recipe-pool maxSize=10 minIdle=2 maxLifetime=1500000ms idleTimeout=600000ms keepalive=120000ms
+```
+
+> 如果自行调大 `db.pool.maxLifetimeMs`，请同时确认它仍小于 MySQL 的
+> `SHOW VARIABLES LIKE 'wait_timeout'`（默认 28800 秒），否则问题会原样复现。
+
 ## 环境配置（本地 / 生产隔离）
 
 所有 IP、端口、数据库口令等**不再写在代码里**，统一放在 `config/` 目录：
@@ -143,12 +175,42 @@ gradlew :server:run
 | `RECIPE_ENV` | 自动判断 | 选择环境：`local` / `prod` |
 | `RECIPE_SERVER_HOST` | `0.0.0.0` | 监听地址 |
 | `RECIPE_SERVER_PORT` | `8080` | 端口 |
+| `RECIPE_SERVER_THREADS` | `8` | HTTP 工作线程数（与 `db.pool.maxSize` 保持一致） |
 | `RECIPE_DB_HOST` | `127.0.0.1` | MySQL 主机 |
 | `RECIPE_DB_PORT` | `3306` | MySQL 端口 |
 | `RECIPE_DB_NAME` | `recipe_app` | 数据库名 |
 | `RECIPE_DB_USER` | `root` | 用户 |
 | `RECIPE_DB_PASSWORD` | `123456` | 密码 |
 | `RECIPE_IN_MEMORY` | `false` | 设为 `true` 使用内存存储（不依赖 MySQL） |
+| `RECIPE_DB_POOL_MAX_SIZE` | `10` | 连接池最大连接数 |
+| `RECIPE_DB_POOL_MAX_LIFETIME_MS` | `1500000` | 连接最大存活时间（须小于 MySQL `wait_timeout`） |
+
+## 健康检查
+
+`GET /api/health` 是**免鉴权**的探针（不需要 token，也不返回任何用户数据），供 systemd /
+监控脚本 / 负载均衡判断实例是否可服务：
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/health
+```
+
+| 状态码 | 含义 | 响应示例 |
+| --- | --- | --- |
+| `200` | 服务和数据库都可用 | `{"status":"ok","db":"up","pool":{"active":1,"idle":2,"total":3,"waiting":0,"max":10},"uptimeMs":91234}` |
+| `200` | 内存模式（未接 MySQL） | `{"status":"ok","db":"in-memory","uptimeMs":91234}` |
+| `503` | 服务在线但数据库探活失败 | `{"status":"degraded","db":"down","pool":{...},"uptimeMs":91234}` |
+
+探活方式是向连接池借一条连接执行 `Connection.isValid()`：连接池已死掉/MySQL 不可达时返回
+`503`，而不是让请求挂住。探测本身最长耗时约等于 `db.pool.connectionTimeoutMs`（默认 5 秒），
+所以脚本超时建议给到 8 秒以上。
+
+配合看门狗（进程不会因为数据库断开而退出，因此必须靠 HTTP 状态判断）：
+
+```bash
+# 每 5 分钟一次；非 2xx 就重启
+code=$(curl -s -o /dev/null -w '%{http_code}' -m 8 http://127.0.0.1:8080/api/health)
+[ "${code:0:1}" = "2" ] || systemctl restart recipe-server
+```
 
 ## 运行 Android 客户端
 
@@ -181,6 +243,7 @@ gradlew :core:test :server:test :app:testDebugUnitTest
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| GET | `/api/health` | **免鉴权**健康探针（200 正常 / 503 数据库不可用） |
 | GET | `/api/recipes?search=&category=` | 菜谱列表 / 搜索 / 按分类过滤（`category` 可选） |
 | GET | `/api/recipes/{id}` | 单个菜谱 |
 | POST | `/api/recipes` | 新建菜谱 |

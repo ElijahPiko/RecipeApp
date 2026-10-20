@@ -5,22 +5,31 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * Opens connections to the local MySQL and creates the schema/database on first run.
+ * Opens the connection pool against MySQL and creates the schema/database on first run.
+ *
+ * The pool — not a single [Connection] — is the handle the DAOs get. That keeps the
+ * "one dead connection kills the whole server" failure mode out of the picture: a broken
+ * connection is discarded and replaced on the next borrow.
  */
 object Db {
 
-    fun connect(config: ServerConfig): Connection {
-        // Ensure the database exists (no db in url), then reconnect to it.
+    /**
+     * Ensures the database exists, starts the pool and applies the schema.
+     *
+     * Throws if MySQL cannot be reached, which lets [com.recipe.server.main] fall back to
+     * in-memory storage instead of starting a server that fails every request.
+     */
+    fun open(config: ServerConfig): HikariConnectionProvider {
+        // The database may not exist yet, and the pool URL includes it — so create it first.
         createDatabase(config)
-        return openConnection(config)
-    }
-
-    private fun openConnection(config: ServerConfig): Connection {
-        val url = "jdbc:mysql://${config.dbHost}:${config.dbPort}/${config.dbName}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8"
-        return DriverManager.getConnection(url, config.dbUser, config.dbPassword).apply {
-            autoCommit = true
-            createSchema()
+        val pool = HikariConnectionProvider(config)
+        try {
+            pool.withConnection { it.createSchema() }
+        } catch (e: Exception) {
+            pool.close()
+            throw e
         }
+        return pool
     }
 
     private fun createDatabase(config: ServerConfig) {

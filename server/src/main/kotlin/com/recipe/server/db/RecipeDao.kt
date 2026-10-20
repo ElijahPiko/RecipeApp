@@ -2,7 +2,6 @@ package com.recipe.server.db
 
 import com.recipe.core.model.Ingredient
 import com.recipe.core.model.Recipe
-import java.sql.Connection
 
 interface RecipeDao {
     fun search(search: String, category: String? = null): List<Recipe>
@@ -16,8 +15,11 @@ interface RecipeDao {
 
 /**
  * JDBC-backed [RecipeDao] storing recipe ingredients/seasonings/steps as JSON columns.
+ *
+ * Every call borrows a connection from [db] and gives it back when the statement is
+ * finished, so no connection is ever held (or shared) across requests.
  */
-class MySqlRecipeDao(private val connection: Connection) : RecipeDao {
+class MySqlRecipeDao(private val db: ConnectionProvider) : RecipeDao {
 
     override fun search(search: String, category: String?): List<Recipe> {
         val q = search.trim()
@@ -37,28 +39,30 @@ class MySqlRecipeDao(private val connection: Connection) : RecipeDao {
         val where = if (conditions.isEmpty()) "" else " WHERE " + conditions.joinToString(" AND ")
         val sql = "SELECT id, name, category, food_materials, seasonings, steps, created_at, " +
             "(image_data IS NOT NULL) AS has_image FROM recipe$where ORDER BY created_at DESC"
-        connection.prepareStatement(sql).use { ps ->
-            params.forEachIndexed { i, p -> ps.setString(i + 1, p) }
-            ps.executeQuery().use { rs ->
-                val out = mutableListOf<Recipe>()
-                while (rs.next()) out += rs.toRecipe()
-                return out
+        return db.withConnection { connection ->
+            connection.prepareStatement(sql).use { ps ->
+                params.forEachIndexed { i, p -> ps.setString(i + 1, p) }
+                ps.executeQuery().use { rs ->
+                    val out = mutableListOf<Recipe>()
+                    while (rs.next()) out += rs.toRecipe()
+                    out
+                }
             }
         }
     }
 
-    override fun get(id: Long): Recipe? {
+    override fun get(id: Long): Recipe? = db.withConnection { connection ->
         connection.prepareStatement(
             "SELECT id, name, category, food_materials, seasonings, steps, created_at, (image_data IS NOT NULL) AS has_image FROM recipe WHERE id = ?"
         ).use { ps ->
             ps.setLong(1, id)
-            ps.executeQuery().use { rs -> return if (rs.next()) rs.toRecipe() else null }
+            ps.executeQuery().use { rs -> if (rs.next()) rs.toRecipe() else null }
         }
     }
 
-    override fun save(recipe: Recipe): Recipe {
+    override fun save(recipe: Recipe): Recipe = db.withConnection { connection ->
         val gson = JsonHolder.gson
-        return if (recipe.id == 0L) {
+        if (recipe.id == 0L) {
             connection.prepareStatement(
                 "INSERT INTO recipe (name, category, food_materials, seasonings, steps, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 java.sql.Statement.RETURN_GENERATED_KEYS
@@ -81,13 +85,15 @@ class MySqlRecipeDao(private val connection: Connection) : RecipeDao {
     }
 
     override fun delete(id: Long) {
-        connection.prepareStatement("DELETE FROM recipe WHERE id = ?").use { ps ->
-            ps.setLong(1, id)
-            ps.executeUpdate()
+        db.withConnection { connection ->
+            connection.prepareStatement("DELETE FROM recipe WHERE id = ?").use { ps ->
+                ps.setLong(1, id)
+                ps.executeUpdate()
+            }
         }
     }
 
-    override fun categories(): List<String> =
+    override fun categories(): List<String> = db.withConnection { connection ->
         connection.prepareStatement(
             "SELECT DISTINCT category FROM recipe ORDER BY category"
         ).use { ps ->
@@ -97,19 +103,22 @@ class MySqlRecipeDao(private val connection: Connection) : RecipeDao {
                 out + CategoryCatalogDefaults.defaults.filter { it !in out }
             }
         }
+    }
 
-    override fun getImage(id: Long): ByteArray? =
+    override fun getImage(id: Long): ByteArray? = db.withConnection { connection ->
         connection.prepareStatement("SELECT image_data FROM recipe WHERE id = ?").use { ps ->
             ps.setLong(1, id)
             ps.executeQuery().use { rs -> if (rs.next()) rs.getBytes("image_data") else null }
         }
+    }
 
-    override fun saveImage(id: Long, bytes: ByteArray): Boolean =
+    override fun saveImage(id: Long, bytes: ByteArray): Boolean = db.withConnection { connection ->
         connection.prepareStatement("UPDATE recipe SET image_data = ? WHERE id = ?").use { ps ->
             ps.setBytes(1, bytes)
             ps.setLong(2, id)
             ps.executeUpdate() > 0
         }
+    }
 
     private fun java.sql.ResultSet.toRecipe(): Recipe {
         val gson = JsonHolder.gson

@@ -1,7 +1,6 @@
 package com.recipe.server.db
 
 import com.recipe.core.model.UserProfile
-import java.sql.Connection
 
 /**
  * The profile is per user. Rows written before the multi-user migration carry
@@ -12,9 +11,9 @@ interface ProfileDao {
     fun save(userId: Long, profile: UserProfile): UserProfile
 }
 
-class MySqlProfileDao(private val connection: Connection) : ProfileDao {
+class MySqlProfileDao(private val db: ConnectionProvider) : ProfileDao {
 
-    override fun get(userId: Long): UserProfile =
+    override fun get(userId: Long): UserProfile = db.withConnection { connection ->
         connection.prepareStatement(
             "SELECT user_id, nickname, avatar_url, signature, location, favorite_category FROM profile WHERE user_id = ?"
         ).use { ps ->
@@ -34,31 +33,35 @@ class MySqlProfileDao(private val connection: Connection) : ProfileDao {
                 }
             }
         }
+    }
 
     override fun save(userId: Long, profile: UserProfile): UserProfile {
-        // Update first; fall back to insert when this user has no row yet.
-        val updated = connection.prepareStatement(
-            "UPDATE profile SET nickname = ?, avatar_url = ?, signature = ?, location = ?, favorite_category = ? WHERE user_id = ?"
-        ).use { ps ->
-            ps.setString(1, profile.nickname)
-            ps.setString(2, profile.avatarUrl)
-            ps.setString(3, profile.signature)
-            ps.setString(4, profile.location)
-            ps.setString(5, profile.favoriteCategory)
-            ps.setLong(6, userId)
-            ps.executeUpdate()
-        }
-        if (updated == 0) {
-            connection.prepareStatement(
-                "INSERT INTO profile (user_id, nickname, avatar_url, signature, location, favorite_category) VALUES (?, ?, ?, ?, ?, ?)"
+        // Update first; fall back to insert when this user has no row yet. Both statements
+        // share one borrowed connection so the update/insert pair stays on the same session.
+        db.withConnection { connection ->
+            val updated = connection.prepareStatement(
+                "UPDATE profile SET nickname = ?, avatar_url = ?, signature = ?, location = ?, favorite_category = ? WHERE user_id = ?"
             ).use { ps ->
-                ps.setLong(1, userId)
-                ps.setString(2, profile.nickname)
-                ps.setString(3, profile.avatarUrl)
-                ps.setString(4, profile.signature)
-                ps.setString(5, profile.location)
-                ps.setString(6, profile.favoriteCategory)
+                ps.setString(1, profile.nickname)
+                ps.setString(2, profile.avatarUrl)
+                ps.setString(3, profile.signature)
+                ps.setString(4, profile.location)
+                ps.setString(5, profile.favoriteCategory)
+                ps.setLong(6, userId)
                 ps.executeUpdate()
+            }
+            if (updated == 0) {
+                connection.prepareStatement(
+                    "INSERT INTO profile (user_id, nickname, avatar_url, signature, location, favorite_category) VALUES (?, ?, ?, ?, ?, ?)"
+                ).use { ps ->
+                    ps.setLong(1, userId)
+                    ps.setString(2, profile.nickname)
+                    ps.setString(3, profile.avatarUrl)
+                    ps.setString(4, profile.signature)
+                    ps.setString(5, profile.location)
+                    ps.setString(6, profile.favoriteCategory)
+                    ps.executeUpdate()
+                }
             }
         }
         return profile.copy(id = userId)

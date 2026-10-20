@@ -56,11 +56,16 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 
 注入字段：`BuildConfig.API_BASE_URL` / `DEBUG_LOGGING` / `ENV_NAME`
 
-## 已知遗留问题（未修）
-- **线上后端 500**：`120.26.55.209:8080` 返回 `No operations allowed after connection closed`。
-  根因：`Main.kt` 把**单个 JDBC Connection 共享**给所有 DAO，而 `HttpApi` 是 8 线程固定池；
-  JDBC Connection 非线程安全，且 `wait_timeout` 断连后无重连机制 → 永久 500。
-  修法：每请求获取 Connection，或引入连接池 + 探活重连。
+## 连接池（2026-10-20 已修复）
+- **旧问题（已解决）**：`Main.kt` 把单个 JDBC Connection 共享给 5 个 DAO，8 线程 HTTP 池并发使用；
+  `wait_timeout` 断连后无重连 → 线上所有接口永久 500（进程不退出，属"假死"）。
+- **现方案**：HikariCP 5.0.1，`db/ConnectionProvider.kt` 提供 `withConnection { }` 借还语义；
+  `Db.open()` 返回 `HikariConnectionProvider`（原 `Db.connect(): Connection` 已删除）。
+- **硬约束**：`db.pool.maxLifetimeMs` 必须 < MySQL `wait_timeout`（默认 28800s），默认 25 分钟；
+  另有 `keepaliveMs=120000` 给空闲连接探活。
+- 改 DAO 注意：方法体统一 `db.withConnection { connection -> ... }`，lambda 内**不能非局部 return**，
+  要用表达式求值（`use{}` 是 inline 所以原本的 `return` 写法会编译失败或语义变化）。
+- 不要再引入 `autoReconnect=true`。
 
 ## 认证体系（2026-10-18 建立）
 - 注册/登录：`POST /api/auth/register|login`，返回 Bearer token；`me`/`logout` 同组

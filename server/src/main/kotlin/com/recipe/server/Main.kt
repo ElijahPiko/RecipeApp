@@ -2,6 +2,7 @@ package com.recipe.server
 
 import com.recipe.server.db.Db
 import com.recipe.server.db.CategoryDao
+import com.recipe.server.db.HikariConnectionProvider
 import com.recipe.server.db.InMemoryCategoryDao
 import com.recipe.server.db.InMemoryMenuDao
 import com.recipe.server.db.InMemoryProfileDao
@@ -30,7 +31,8 @@ fun main() {
     println("Config env: ${RecipeConfigFile.envName} (source: ${config.sourceDescription})")
     println(
         "Effective: http://${config.host}:${config.port} | " +
-            "db=${config.dbHost}:${config.dbPort}/${config.dbName} | inMemory=${config.useInMemory}"
+            "db=${config.dbHost}:${config.dbPort}/${config.dbName} | " +
+            "inMemory=${config.useInMemory} | threads=${config.serverThreads}"
     )
 
     lateinit var recipeDao: RecipeDao
@@ -38,6 +40,7 @@ fun main() {
     lateinit var menuDao: MenuDao
     lateinit var profileDao: ProfileDao
     lateinit var userDao: UserDao
+    var pool: HikariConnectionProvider? = null
 
     if (config.useInMemory) {
         println("Running with in-memory data (no MySQL).")
@@ -48,16 +51,22 @@ fun main() {
         userDao = InMemoryUserDao()
     } else {
         try {
-            val conn = Db.connect(config)
+            // A pooled provider, not a single shared Connection: every DAO call borrows a
+            // healthy connection and returns it, so one dead socket can only cost one request.
+            val db = Db.open(config)
+            pool = db
             println("Connected to MySQL ${config.dbHost}:${config.dbPort}/${config.dbName}.")
-            recipeDao = MySqlRecipeDao(conn)
-            categoryDao = MySqlCategoryDao(conn)
+            println("Connection ${db.describe()}")
+            recipeDao = MySqlRecipeDao(db)
+            categoryDao = MySqlCategoryDao(db)
             categoryDao.seedDefaults()
-            menuDao = MySqlMenuDao(conn)
-            profileDao = MySqlProfileDao(conn)
-            userDao = MySqlUserDao(conn)
+            menuDao = MySqlMenuDao(db)
+            profileDao = MySqlProfileDao(db)
+            userDao = MySqlUserDao(db)
             seedIfEmpty(recipeDao)
         } catch (e: Exception) {
+            pool?.close()
+            pool = null
             System.err.println("MySQL connection failed: ${e.message}")
             System.err.println("Falling back to in-memory storage. Set RECIPE_IN_MEMORY=false and fix MySQL to persist data.")
             recipeDao = InMemoryRecipeDao()
@@ -68,11 +77,17 @@ fun main() {
         }
     }
 
-    val api = HttpApi(config, recipeDao, menuDao, profileDao, categoryDao, userDao)
+    // `pool` doubles as the /api/health source; null in in-memory mode.
+    val api = HttpApi(config, recipeDao, menuDao, profileDao, categoryDao, userDao, pool)
     val server = RecipeServer(config, api)
     server.start()
     println("Recipe server started at http://${config.host}:${config.port} (${System.currentTimeMillis() - start}ms)")
-    Runtime.getRuntime().addShutdownHook(Thread { server.stop() })
+    Runtime.getRuntime().addShutdownHook(
+        Thread {
+            server.stop()
+            pool?.close()
+        }
+    )
     // Block forever.
     Thread.currentThread().join()
 }
