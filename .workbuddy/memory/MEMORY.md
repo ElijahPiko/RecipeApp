@@ -67,6 +67,16 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
   要用表达式求值（`use{}` 是 inline 所以原本的 `return` 写法会编译失败或语义变化）。
 - 不要再引入 `autoReconnect=true`。
 
+## 菜谱页 UI 约定（2026-10-21）
+- 顶部只有搜索框（撑满整行）；「点菜」「新建菜谱」是两个**不随滚动**的 56dp 圆形悬浮按钮：
+  右下角=点菜（图标 `R.drawable.ic_order_dishes`，右上角红色 Badge 显示数量，0 时不显示），
+  左下角=新建（`Icons.Filled.Add`，surface 底 + 橙 `#E4572E`）。
+- 用 `ui/recipes/RecipesScreen.kt` 里的私有 `CircleFab` 实现，不要换回 `FloatingActionButton`
+  （图标要满铺圆形，且 ripple 会被不透明图标遮住，按压反馈改用 scale 0.92）。
+- 网格底部留 88dp contentPadding，Snackbar 上移 80dp，否则会压住按钮。
+- 无障碍：`clearAndSetSemantics` 把描述和 onClick 放在同一节点，别只用 `onClickLabel`。
+
+
 ## 认证体系（2026-10-18 建立）
 - 注册/登录：`POST /api/auth/register|login`，返回 Bearer token；`me`/`logout` 同组
 - 其余 `/api/**` 一律要 `Authorization: Bearer <token>`，图片 GET 除外（Coil 无法带 header）

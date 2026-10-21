@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.recipe.app.data.OrderCartStore
 import com.recipe.core.data.RecipeRepository
+import com.recipe.core.model.OrderCart
 import com.recipe.core.model.Recipe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +26,12 @@ class RecipesViewModel(
 
     private val _uiState = MutableStateFlow(RecipesUiState())
     val uiState: StateFlow<RecipesUiState> = _uiState.asStateFlow()
+
+    /**
+     * The live order cart. Exposed so the 点菜 FAB can show how many dishes are queued;
+     * the store itself is activity-scoped, so the badge survives tab switches and returns.
+     */
+    val cart: StateFlow<OrderCart> = orderCart.cart
 
     init {
         loadCategories()
