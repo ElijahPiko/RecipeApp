@@ -4,13 +4,16 @@ import com.recipe.server.db.Db
 import com.recipe.server.db.CategoryDao
 import com.recipe.server.db.HikariConnectionProvider
 import com.recipe.server.db.InMemoryCategoryDao
+import com.recipe.server.db.InMemoryMaterialDao
 import com.recipe.server.db.InMemoryMenuDao
 import com.recipe.server.db.InMemoryProfileDao
 import com.recipe.server.db.InMemoryRecipeDao
 import com.recipe.server.db.InMemoryUserDao
 import com.recipe.server.db.JsonHolder
+import com.recipe.server.db.MaterialDao
 import com.recipe.server.db.MenuDao
 import com.recipe.server.db.MySqlCategoryDao
+import com.recipe.server.db.MySqlMaterialDao
 import com.recipe.server.db.MySqlMenuDao
 import com.recipe.server.db.MySqlProfileDao
 import com.recipe.server.db.MySqlRecipeDao
@@ -40,6 +43,7 @@ fun main() {
     lateinit var menuDao: MenuDao
     lateinit var profileDao: ProfileDao
     lateinit var userDao: UserDao
+    lateinit var materialDao: MaterialDao
     var pool: HikariConnectionProvider? = null
 
     if (config.useInMemory) {
@@ -49,6 +53,7 @@ fun main() {
         menuDao = InMemoryMenuDao()
         profileDao = InMemoryProfileDao()
         userDao = InMemoryUserDao()
+        materialDao = InMemoryMaterialDao()
     } else {
         try {
             // A pooled provider, not a single shared Connection: every DAO call borrows a
@@ -63,6 +68,7 @@ fun main() {
             menuDao = MySqlMenuDao(db)
             profileDao = MySqlProfileDao(db)
             userDao = MySqlUserDao(db)
+            materialDao = MySqlMaterialDao(db)
             seedIfEmpty(recipeDao)
         } catch (e: Exception) {
             pool?.close()
@@ -74,11 +80,12 @@ fun main() {
             menuDao = InMemoryMenuDao()
             profileDao = InMemoryProfileDao()
             userDao = InMemoryUserDao()
+            materialDao = InMemoryMaterialDao()
         }
     }
 
     // `pool` doubles as the /api/health source; null in in-memory mode.
-    val api = HttpApi(config, recipeDao, menuDao, profileDao, categoryDao, userDao, pool)
+    val api = HttpApi(config, recipeDao, menuDao, profileDao, categoryDao, userDao, materialDao, pool)
     val server = RecipeServer(config, api)
     server.start()
     println("Recipe server started at http://${config.host}:${config.port} (${System.currentTimeMillis() - start}ms)")

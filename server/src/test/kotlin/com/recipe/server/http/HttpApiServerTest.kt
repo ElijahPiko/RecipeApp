@@ -3,6 +3,7 @@ package com.recipe.server.http
 import com.recipe.server.ServerConfig
 import com.recipe.server.db.HealthSource
 import com.recipe.server.db.InMemoryCategoryDao
+import com.recipe.server.db.InMemoryMaterialDao
 import com.recipe.server.db.InMemoryMenuDao
 import com.recipe.server.db.InMemoryProfileDao
 import com.recipe.server.db.InMemoryRecipeDao
@@ -13,6 +14,7 @@ import com.recipe.core.model.Recipe
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
@@ -45,7 +47,10 @@ class HttpApiServerTest {
             port = freePort()
             val config = ServerConfig(host = "127.0.0.1", port = port)
             recipeDao = InMemoryRecipeDao()
-            val api = HttpApi(config, recipeDao, InMemoryMenuDao(), InMemoryProfileDao(), InMemoryCategoryDao(), InMemoryUserDao())
+            val api = HttpApi(
+                config, recipeDao, InMemoryMenuDao(), InMemoryProfileDao(),
+                InMemoryCategoryDao(), InMemoryUserDao(), InMemoryMaterialDao()
+            )
             server = RecipeServer(config, api)
             server.start()
             baseUrl = "http://127.0.0.1:$port"
@@ -339,6 +344,7 @@ class HttpApiServerTest {
         val api = HttpApi(
             config,
             InMemoryRecipeDao(), InMemoryMenuDao(), InMemoryProfileDao(), InMemoryCategoryDao(), InMemoryUserDao(),
+            InMemoryMaterialDao(),
             object : HealthSource {
                 override fun ping(): Boolean = false
                 override fun stats(): Map<String, Int> = mapOf("active" to 0, "idle" to 0, "total" to 0)
@@ -359,6 +365,56 @@ class HttpApiServerTest {
         } finally {
             probeServer.stop()
         }
+    }
+
+    // ---- Materials ----
+
+    @Test
+    fun `material bills are recorded and folded into a weighted average price`() {
+        val first = request("POST", "/api/materials/bills", """{"name":"排骨","weightKg":1.0,"price":40.0}""")
+        assertEquals(200, first.first)
+        // The server stamps createdAt itself; a client that omits it must not land in 1970.
+        val stamped = Regex("\"createdAt\":(\\d+)").find(first.second)!!.groupValues[1].toLong()
+        assertTrue(stamped > 0L)
+        val second = request("POST", "/api/materials/bills", """{"name":"排骨","weightKg":1.5,"price":45.0}""")
+        assertEquals(200, second.first)
+
+        val bills = request("GET", "/api/materials/bills")
+        assertEquals(200, bills.first)
+        assertTrue(bills.second.contains("排骨"))
+
+        // Weighted by weight, not a mean of unit prices: (40 + 45) / (1.0 + 1.5) = 34 元/kg
+        val prices = request("GET", "/api/materials/prices")
+        assertEquals(200, prices.first)
+        val avg = Regex("\"name\":\"排骨\",\"avgPricePerKg\":([0-9.]+)").find(prices.second)
+        assertNotNull(avg)
+        assertEquals(34.0, avg!!.groupValues[1].toDouble(), 0.001)
+
+        val stats = request("GET", "/api/materials/stats")
+        assertEquals(200, stats.first)
+        assertTrue(stats.second.contains("\"totalPrice\""))
+    }
+
+    @Test
+    fun `material bill rejects a non positive weight`() {
+        assertEquals(
+            400,
+            request("POST", "/api/materials/bills", """{"name":"白菜","weightKg":0,"price":5}""").first
+        )
+    }
+
+    @Test
+    fun `deleting a material bill rebuilds the average price`() {
+        val created = request("POST", "/api/materials/bills", """{"name":"土豆","weightKg":2.0,"price":8.0}""")
+        assertEquals(200, created.first)
+        val id = Regex("\"id\":(\\d+)").find(created.second)!!.groupValues[1]
+
+        assertTrue(request("GET", "/api/materials/prices").second.contains("土豆"))
+
+        assertEquals(200, request("DELETE", "/api/materials/bills/$id").first)
+        assertFalse(request("GET", "/api/materials/bills").second.contains("土豆"))
+        // The aggregate row must disappear once the last bill for that material is gone.
+        assertFalse(request("GET", "/api/materials/prices").second.contains("土豆"))
     }
 
     private fun gsonRecipe(name: String): String =

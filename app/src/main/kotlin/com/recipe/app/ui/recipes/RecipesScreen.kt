@@ -1,11 +1,6 @@
 package com.recipe.app.ui.recipes
 
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
@@ -40,24 +34,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onClick
-import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.dp
 import com.recipe.app.R
+import com.recipe.app.ui.components.CircularFab
+import com.recipe.app.ui.components.FabSize
 import com.recipe.app.ui.components.RecipeCard
 import com.recipe.app.viewmodel.RecipesViewModel
 import kotlinx.coroutines.launch
-
-/** Diameter of both floating action buttons. */
-private val FabSize = 56.dp
 
 /** Exact colour of the 点菜 artwork's disc, so the button outline blends into the icon. */
 private val OrderFabOrange = Color(0xFFE4572E)
@@ -199,7 +184,7 @@ private fun OrderFab(
             }
         }
     ) {
-        CircleFab(
+        CircularFab(
             onClick = onClick,
             containerColor = OrderFabOrange,
             contentDescription = description
@@ -219,7 +204,7 @@ private fun NewRecipeFab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    CircleFab(
+    CircularFab(
         onClick = onClick,
         modifier = modifier,
         // Neutral surface + brand orange glyph: clearly secondary to the 点菜 button
@@ -233,53 +218,5 @@ private fun NewRecipeFab(
             tint = OrderFabOrange,
             modifier = Modifier.size(28.dp)
         )
-    }
-}
-
-/**
- * A circular floating button.
- *
- * Built by hand instead of `FloatingActionButton` because the 点菜 icon must fill the
- * circle edge to edge. Press feedback is a slight scale-down: a ripple would be hidden
- * underneath an opaque icon anyway.
- */
-@Composable
-private fun CircleFab(
-    onClick: () -> Unit,
-    containerColor: Color,
-    contentDescription: String,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.92f else 1f, label = "fabScale")
-
-    Box(
-        modifier = modifier
-            .size(FabSize)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
-            .shadow(elevation = 6.dp, shape = CircleShape)
-            .clip(CircleShape)
-            .background(containerColor)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                role = Role.Button,
-                onClick = onClick
-            )
-            // Name the button on the same node that carries the click action, so TalkBack
-            // reads one node instead of a clickable parent plus an unnamed child.
-            .clearAndSetSemantics {
-                this.contentDescription = contentDescription
-                this.role = Role.Button
-                this.onClick(label = contentDescription) { onClick(); true }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        content()
     }
 }

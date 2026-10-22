@@ -28,11 +28,13 @@ import androidx.navigation.compose.rememberNavController
 import com.recipe.app.RecipeApplication
 import com.recipe.app.data.AppContainer
 import com.recipe.app.ui.auth.AuthScreen
+import com.recipe.app.ui.materials.MaterialsScreen
 import com.recipe.app.ui.menu.MenusScreen
 import com.recipe.app.ui.order.OrderScreen
 import com.recipe.app.ui.profile.ProfileScreen
 import com.recipe.app.ui.recipe.NewRecipeScreen
 import com.recipe.app.ui.recipes.RecipesScreen
+import com.recipe.app.viewmodel.MaterialsViewModel
 import com.recipe.app.viewmodel.MenusViewModel
 import com.recipe.app.viewmodel.NewRecipeViewModel
 import com.recipe.app.viewmodel.OrderViewModel
@@ -45,6 +47,7 @@ private object Routes {
     const val PROFILE = "profile"
     const val ORDER = "order"
     const val NEW_RECIPE = "newRecipe"
+    const val MATERIALS = "materials"
 }
 
 @Composable
@@ -94,9 +97,20 @@ private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
             }
             composable(Routes.MENUS) {
                 val vm = viewModel<MenusViewModel>(factory = viewModelFactory {
-                    initializer { MenusViewModel(container.menuRepository) }
+                    initializer {
+                        MenusViewModel(container.menuRepository, container.materialRepository)
+                    }
                 })
-                MenusScreen(viewModel = vm)
+                MenusScreen(
+                    viewModel = vm,
+                    onOpenMaterials = { navController.navigate(Routes.MATERIALS) }
+                )
+            }
+            composable(Routes.MATERIALS) {
+                val vm = viewModel<MaterialsViewModel>(factory = viewModelFactory {
+                    initializer { MaterialsViewModel(container.materialRepository) }
+                })
+                MaterialsScreen(viewModel = vm, onBack = { navController.popBackStack() })
             }
             composable(Routes.PROFILE) {
                 val vm = viewModel<ProfileViewModel>(factory = viewModelFactory {

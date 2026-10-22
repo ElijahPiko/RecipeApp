@@ -120,3 +120,40 @@ data class UserProfile(
     val location: String = "",
     val favoriteCategory: String = ""
 )
+
+/**
+ * One purchase line in the 材料账单: what was bought, how much it weighed, what it cost.
+ *
+ * Weight is always kilograms and money is always yuan, so the derived unit price is
+ * 元/千克 — the single unit the whole ledger is normalised to for now.
+ */
+data class MaterialBill(
+    val id: Long = 0,
+    val name: String,
+    val weightKg: Double = 0.0,
+    val price: Double = 0.0,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    /** Derived unit price, never stored on the bill itself. */
+    val pricePerKg: Double get() = if (weightKg <= 0.0) 0.0 else price / weightKg
+}
+
+/**
+ * Historical average purchase price of one material, maintained per user by the server
+ * in its own table. It is a weighted average: total spend / total weight, in 元/千克.
+ */
+data class MaterialPrice(
+    val name: String = "",
+    val avgPricePerKg: Double = 0.0,
+    val totalWeightKg: Double = 0.0,
+    val totalPrice: Double = 0.0,
+    val billCount: Int = 0
+)
+
+/**
+ * Totals over the whole 材料账单. [totalPrice] is what the 菜单 page shows as 「总金额」.
+ */
+data class MaterialStats(
+    val totalPrice: Double = 0.0,
+    val entryCount: Int = 0
+)

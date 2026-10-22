@@ -1,6 +1,7 @@
 package com.recipe.app.viewmodel
 
 import com.recipe.app.data.OrderCartStore
+import com.recipe.core.data.fake.InMemoryMaterialRepository
 import com.recipe.core.data.fake.InMemoryMenuRepository
 import com.recipe.core.data.fake.InMemoryProfileRepository
 import com.recipe.core.data.fake.InMemoryRecipeRepository
@@ -135,7 +136,8 @@ class MenusViewModelTest {
         val repo = InMemoryMenuRepository()
         repo.create(com.recipe.core.model.MenuRecord(totalCost = 40.0))
         repo.create(com.recipe.core.model.MenuRecord(totalCost = 60.0))
-        val vm = MenusViewModel(repo)
+        val vm = MenusViewModel(repo, InMemoryMaterialRepository())
+        vm.refresh()
         advanceUntilIdle()
         assertEquals(2, vm.uiState.value.records.size)
         assertEquals(100.0, vm.uiState.value.stats.totalCost, 0.0001)
@@ -145,11 +147,73 @@ class MenusViewModelTest {
     fun `update cost refreshes stats`() = runTest(dispatcher) {
         val repo = InMemoryMenuRepository()
         val menu = repo.create(com.recipe.core.model.MenuRecord(totalCost = 10.0))
-        val vm = MenusViewModel(repo)
+        val vm = MenusViewModel(repo, InMemoryMaterialRepository())
+        vm.refresh()
         advanceUntilIdle()
         vm.updateCost(menu.id, 99.0)
         advanceUntilIdle()
         assertEquals(99.0, vm.uiState.value.records.first().totalCost, 0.0001)
+    }
+
+    @Test
+    fun `total spend comes from the material ledger not the menu costs`() = runTest(dispatcher) {
+        val menuRepo = InMemoryMenuRepository()
+        menuRepo.create(com.recipe.core.model.MenuRecord(totalCost = 999.0))
+        val materials = InMemoryMaterialRepository()
+        materials.add(com.recipe.core.model.MaterialBill(name = "排骨", weightKg = 1.0, price = 40.0))
+        materials.add(com.recipe.core.model.MaterialBill(name = "青菜", weightKg = 0.5, price = 10.0))
+
+        val vm = MenusViewModel(menuRepo, materials)
+        vm.refresh()
+        advanceUntilIdle()
+
+        // 总金额 = 账单累计 50，而不是菜单记录里的 999
+        assertEquals(50.0, vm.uiState.value.totalSpend, 0.0001)
+        // 平均花费 = 总金额 ÷ 1 次点菜
+        assertEquals(50.0, vm.uiState.value.averageSpend, 0.0001)
+    }
+}
+
+class MaterialsViewModelTest {
+    private val dispatcher = StandardTestDispatcher()
+
+    @Before fun setUp() { Dispatchers.setMain(dispatcher) }
+    @After fun tearDown() { Dispatchers.resetMain() }
+
+    @Test
+    fun `adding bills updates totals and the weighted average`() = runTest(dispatcher) {
+        val repo = InMemoryMaterialRepository()
+        val vm = MaterialsViewModel(repo)
+        vm.refresh()
+        advanceUntilIdle()
+
+        vm.add("排骨", 1.0, 40.0)
+        advanceUntilIdle()
+        vm.add("排骨", 1.5, 45.0)
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertEquals(2, state.bills.size)
+        assertEquals(85.0, state.stats.totalPrice, 0.0001)
+        // (40 + 45) / (1.0 + 1.5) = 34 元/千克
+        assertEquals(34.0, state.averageFor("排骨")!!.avgPricePerKg, 0.0001)
+    }
+
+    @Test
+    fun `deleting the last bill drops the material average`() = runTest(dispatcher) {
+        val repo = InMemoryMaterialRepository()
+        val vm = MaterialsViewModel(repo)
+        vm.refresh()
+        advanceUntilIdle()
+        vm.add("土豆", 2.0, 8.0)
+        advanceUntilIdle()
+
+        vm.delete(vm.uiState.value.bills.first().id)
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.bills.isEmpty())
+        assertEquals(0.0, vm.uiState.value.stats.totalPrice, 0.0001)
+        assertEquals(null, vm.uiState.value.averageFor("土豆"))
     }
 }
 

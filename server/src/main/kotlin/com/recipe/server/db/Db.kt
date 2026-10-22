@@ -89,6 +89,28 @@ object Db {
                     "token VARCHAR(64)," +
                     "created_at BIGINT NOT NULL)"
             )
+            // 材料账单：一条购买记录（材料名 / 重量 kg / 金额 元）。
+            st.execute(
+                "CREATE TABLE IF NOT EXISTS material_bill (" +
+                    "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
+                    "user_id BIGINT NOT NULL," +
+                    "name VARCHAR(64) NOT NULL," +
+                    "weight_kg DOUBLE NOT NULL," +
+                    "price DOUBLE NOT NULL," +
+                    "created_at BIGINT NOT NULL," +
+                    "INDEX idx_material_bill_user (user_id, created_at))"
+            )
+            // 材料均价表：按 (user_id, name) 维护累计重量与累计金额，均价 = 总价 / 总重量（元/千克）。
+            st.execute(
+                "CREATE TABLE IF NOT EXISTS material_price (" +
+                    "user_id BIGINT NOT NULL," +
+                    "name VARCHAR(64) NOT NULL," +
+                    "total_weight_kg DOUBLE NOT NULL DEFAULT 0," +
+                    "total_price DOUBLE NOT NULL DEFAULT 0," +
+                    "bill_count INT NOT NULL DEFAULT 0," +
+                    "updated_at BIGINT NOT NULL," +
+                    "PRIMARY KEY (user_id, name))"
+            )
         }
         // Migrate existing databases created before image_data existed (images were stored as URLs).
         if (!columnExists("recipe", "image_data")) {

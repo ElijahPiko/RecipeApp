@@ -2,6 +2,7 @@ package com.recipe.server.db
 
 import com.recipe.core.model.Ingredient
 import com.recipe.core.model.Category
+import com.recipe.core.model.MaterialBill
 import com.recipe.core.model.MenuRecord
 import com.recipe.core.model.OrderItem
 import com.recipe.core.model.Recipe
@@ -127,6 +128,35 @@ class MySqlDaoIntegrationTest {
 
             recipeDao.delete(saved.id)
             assertTrue(categoryDao.delete(created.id))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `mysql material dao keeps a weighted average price per material`() {
+        val db = Db.open(config)
+        try {
+            val dao = MySqlMaterialDao(db)
+            val first = dao.add(1L, MaterialBill(name = "集成测试排骨", weightKg = 1.0, price = 30.0))
+            dao.add(1L, MaterialBill(name = "集成测试排骨", weightKg = 2.0, price = 90.0))
+
+            // Weighted average: (30 + 90) / (1 + 2) = 40 元/千克
+            val price = dao.prices(1L).first { it.name == "集成测试排骨" }
+            assertEquals(40.0, price.avgPricePerKg, 0.0001)
+            assertEquals(3.0, price.totalWeightKg, 0.0001)
+            assertEquals(2, price.billCount)
+
+            // Deleting one bill rebuilds the aggregate from what is left: 90 / 2 = 45
+            assertTrue(dao.delete(1L, first.id))
+            val after = dao.prices(1L).first { it.name == "集成测试排骨" }
+            assertEquals(45.0, after.avgPricePerKg, 0.0001)
+            assertEquals(1, after.billCount)
+
+            // The aggregate row disappears with the last bill.
+            dao.bills(1L).filter { it.name == "集成测试排骨" }.forEach { dao.delete(1L, it.id) }
+            assertTrue(dao.prices(1L).none { it.name == "集成测试排骨" })
+            assertEquals(0, dao.bills(1L).count { it.name == "集成测试排骨" })
         } finally {
             db.close()
         }

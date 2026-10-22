@@ -4,6 +4,9 @@ import com.recipe.core.domain.MenuStats
 import com.recipe.core.domain.MenuStatsCalculator
 import com.recipe.core.model.CategoryCatalog
 import com.recipe.core.model.Ingredient
+import com.recipe.core.model.MaterialBill
+import com.recipe.core.model.MaterialPrice
+import com.recipe.core.model.MaterialStats
 import com.recipe.core.model.MenuRecord
 import com.recipe.core.model.Recipe
 import com.recipe.core.model.UserProfile
@@ -95,5 +98,51 @@ class InMemoryProfileDao : ProfileDao {
         val saved = profile.copy(id = userId)
         profiles[userId] = saved
         return saved
+    }
+}
+
+/**
+ * In-memory [MaterialDao]. Mirrors the SQL contract: averages are weighted by weight and
+ * are recomputed from the surviving bills on delete.
+ */
+class InMemoryMaterialDao : MaterialDao {
+    private val bills = LinkedHashMap<Long, MaterialBill>()
+    private val owners = LinkedHashMap<Long, Long>()
+    private val ids = AtomicLong(2000)
+
+    override fun bills(userId: Long): List<MaterialBill> =
+        bills.values.filter { owners[it.id] == userId }
+            .sortedWith(compareByDescending<MaterialBill> { it.createdAt }.thenByDescending { it.id })
+
+    override fun add(userId: Long, bill: MaterialBill): MaterialBill {
+        val saved = bill.copy(id = ids.incrementAndGet())
+        bills[saved.id] = saved
+        owners[saved.id] = userId
+        return saved
+    }
+
+    override fun delete(userId: Long, id: Long): Boolean {
+        if (owners[id] != userId) return false
+        bills.remove(id)
+        owners.remove(id)
+        return true
+    }
+
+    override fun prices(userId: Long): List<MaterialPrice> =
+        bills(userId).groupBy { it.name }.map { (name, list) ->
+            val weight = list.sumOf { it.weightKg }
+            val total = list.sumOf { it.price }
+            MaterialPrice(
+                name = name,
+                avgPricePerKg = if (weight > 0) total / weight else 0.0,
+                totalWeightKg = weight,
+                totalPrice = total,
+                billCount = list.size
+            )
+        }.sortedBy { it.name }
+
+    override fun stats(userId: Long): MaterialStats {
+        val mine = bills(userId)
+        return MaterialStats(totalPrice = mine.sumOf { it.price }, entryCount = mine.size)
     }
 }

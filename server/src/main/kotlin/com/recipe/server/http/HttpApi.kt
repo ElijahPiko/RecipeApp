@@ -8,6 +8,7 @@ import com.recipe.server.auth.PasswordHasher
 import com.recipe.server.db.CategoryDao
 import com.recipe.server.db.HealthSource
 import com.recipe.server.db.JsonHolder
+import com.recipe.server.db.MaterialDao
 import com.recipe.server.db.MenuDao
 import com.recipe.server.db.ProfileDao
 import com.recipe.server.db.RecipeDao
@@ -30,8 +31,8 @@ import java.util.concurrent.Executors
  *  - `GET /api/health` stays public so an external watchdog can probe the service without
  *    holding credentials. It returns 200 when the database answers and 503 when it does not.
  *
- * Data scope: recipes and categories are shared across users; menu records and the
- * profile are private and always resolved against the token's user id.
+ * Data scope: recipes and categories are shared across users; menu records, the material
+ * ledger and the profile are private and always resolved against the token's user id.
  *
  * Recipe images are stored as BLOBs in MySQL (max 16 MB) and served from
  * `/api/recipes/{id}/image`. The Recipe JSON exposes a client-facing `imageUrl`
@@ -44,6 +45,7 @@ class HttpApi(
     private val profileDao: ProfileDao,
     private val categoryDao: CategoryDao,
     private val userDao: UserDao,
+    private val materialDao: MaterialDao,
     /** Null when running on in-memory storage. */
     private val health: HealthSource? = null
 ) {
@@ -102,6 +104,12 @@ class HttpApi(
         path == "/api/menus" && method == "POST" -> createMenu(exchange, userId)
         path == "/api/profile" && method == "GET" -> getProfile(userId)
         path == "/api/profile" && method == "PUT" -> saveProfile(exchange, userId)
+        // 材料账单：历史账单、累计统计、各材料均价
+        path == "/api/materials/bills" && method == "GET" -> Response(200, JsonHolder.gson.toJson(materialDao.bills(userId)))
+        path == "/api/materials/bills" && method == "POST" -> addMaterialBill(exchange, userId)
+        path == "/api/materials/prices" && method == "GET" -> Response(200, JsonHolder.gson.toJson(materialDao.prices(userId)))
+        path == "/api/materials/stats" && method == "GET" -> Response(200, JsonHolder.gson.toJson(materialDao.stats(userId)))
+        path.matches(Regex("/api/materials/bills/[0-9]+")) && method == "DELETE" -> deleteMaterialBill(exchange, userId)
         IMAGE_PATH.matches(path) && method == "POST" -> uploadRecipeImage(exchange)
         path.matches(Regex("/api/recipes/[0-9]+")) &&
             (method == "GET" || method == "PUT" || method == "DELETE") -> recipeById(exchange, method)
@@ -309,6 +317,33 @@ class HttpApi(
             }
         }
     }
+
+    // ---- Materials (材料账单) ----
+
+    private fun addMaterialBill(exchange: HttpExchange, userId: Long): Response {
+        val bill = JsonHolder.gson.fromJson<com.recipe.core.model.MaterialBill>(readBody(exchange), com.recipe.core.model.MaterialBill::class.java)
+        val name = bill.name.trim()
+        if (name.isEmpty()) return badRequest("材料名称不能为空")
+        if (bill.weightKg <= 0.0) return badRequest("重量必须大于 0（单位：千克）")
+        if (bill.price < 0.0) return badRequest("价格不能为负数")
+        // Stamp server time: a ledger's ordering must not depend on the device clock, and a
+        // client that omits createdAt (e.g. curl) would otherwise land in 1970.
+        val saved = materialDao.add(userId, bill.copy(name = name, createdAt = System.currentTimeMillis()))
+        return Response(200, JsonHolder.gson.toJson(saved))
+    }
+
+    private fun deleteMaterialBill(exchange: HttpExchange, userId: Long): Response {
+        val id = exchange.requestURI.path.substringAfterLast('/').toLongOrNull()
+            ?: return badRequest("invalid id")
+        return if (materialDao.delete(userId, id)) {
+            Response(200, "{}")
+        } else {
+            Response(404, JsonHolder.gson.toJson(mapOf("error" to "not found")))
+        }
+    }
+
+    private fun badRequest(message: String): Response =
+        Response(400, JsonHolder.gson.toJson(mapOf("error" to message)))
 
     // ---- Profile ----
     private fun getProfile(userId: Long): Response =

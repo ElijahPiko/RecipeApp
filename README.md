@@ -46,7 +46,17 @@ Recipe/
 
 ### 菜单页
 - 顶部展示：**点菜次数、总金额、平均点菜花费**
-- 历史点菜记录列表，支持修改每次做菜的 **花费金额** 并保存
+  - **总金额 = 材料账单的累计支出**（不是各条菜单记录里手填的花费合计）
+  - **平均花费 = 总金额 ÷ 点菜次数**
+- 历史点菜记录列表，支持修改每次做菜的 **花费金额** 并保存（仅作单次记录，不参与顶部统计）
+- **右下角悬浮圆形按钮（菜篮子图标）**：进入 **材料账单** 页面，不随列表滚动
+
+### 材料账单页
+- 每笔记录一行：**材料名称 / 重量（千克）/ 金额（元）**
+- 顶部显示 **累计支出**、账单条数、材料种类数量
+- 录入时若该材料已有历史记录，会实时提示其 **历史均价（元/千克）**
+- 每条记录可删除；删除后该材料的均价会按剩余记录自动重算
+- 单位暂时统一为 **元每千克**：均价由服务端按 **总金额 ÷ 总重量**（加权平均）维护，而不是单价的简单平均
 
 ### 个人页
 - 昵称、签名、所在地、喜欢的分类等个人信息配置
@@ -54,8 +64,14 @@ Recipe/
 
 ## 数据库
 
-首次启动后端会自动创建数据库 `recipe_app` 及四张表：`recipe`（菜谱）、`category`（分类）、
-`menu_record`（菜单记录）、`profile`（个人信息）。菜谱的食品材料 / 调料 / 步骤以 JSON 列存储。
+首次启动后端会自动创建数据库 `recipe_app` 及以下表：`recipe`（菜谱）、`category`（分类）、
+`menu_record`（菜单记录）、`profile`（个人信息）、`material_bill`（材料账单）、
+`material_price`（材料均价）。菜谱的食品材料 / 调料 / 步骤以 JSON 列存储。
+
+`material_bill` 每行是一次采购（`name` / `weight_kg` / `price` / `created_at`），按 `user_id` 隔离；
+`material_price` 以 `(user_id, name)` 为主键，维护累计重量、累计金额与条数，
+读取时按 `total_price / total_weight_kg` 得出 **元/千克** 加权均价。
+新增账单时累加、删除账单时按剩余记录重算，两张表始终保持一致。
 
 `category` 为**独立的分类表**，启动时会自动填充内置分类（家常菜 / 汤羹 / 凉菜 / 主食 / 烘焙 / 饮品 / 其他），
 随后可在 **个人页** 对其增删改。菜谱的 `category` 列只保存分类名（字符串），新建菜谱时从下拉框中选择，不能自由输入。
@@ -262,6 +278,11 @@ gradlew :core:test :server:test :app:testDebugUnitTest
 | DELETE | `/api/menus/{id}` | 删除记录 |
 | GET | `/api/profile` | 获取个人信息 |
 | PUT | `/api/profile` | 保存个人信息 |
+| GET | `/api/materials/bills` | 材料账单列表（新→旧） |
+| POST | `/api/materials/bills` | 新增一条采购（body: `{name, weightKg, price}`，`createdAt` 由服务端打） |
+| DELETE | `/api/materials/bills/{id}` | 删除一条采购，并按剩余记录重算该材料均价 |
+| GET | `/api/materials/prices` | 各材料均价（元/千克，加权平均） |
+| GET | `/api/materials/stats` | 账单合计：`{totalPrice, entryCount}` |
 
 当某道菜谱存在图片时，`GET /api/recipes`（及 `GET /api/recipes/{id}`）返回的 `hasImage` 为 `true`，
 且 `imageUrl` 指向对应的 `/api/recipes/{id}/image` 端点。
