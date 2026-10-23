@@ -17,6 +17,8 @@ data class MenusUiState(
     val records: List<MenuRecord> = emptyList(),
     val materialStats: MaterialStats = MaterialStats(),
     val loading: Boolean = false,
+    /** 正在上传照片的记录 id，用来禁用按钮、避免重复上传。 */
+    val uploadingId: Long? = null,
     val error: String? = null
 ) {
     /**
@@ -56,10 +58,19 @@ class MenusViewModel(
         }
     }
 
-    fun updateCost(id: Long, totalCost: Double) {
+    /** 上传一张自己拍的菜单照片，成功后重新拉列表（服务端会返回新的缓存版本号）。 */
+    fun uploadPhoto(id: Long, bytes: ByteArray) {
+        if (_uiState.value.uploadingId != null) return
+        _uiState.value = _uiState.value.copy(uploadingId = id, error = null)
         viewModelScope.launch {
-            runCatching { repository.updateCost(id, totalCost) }
-                .onSuccess { refresh() }
+            runCatching { repository.uploadPhoto(id, bytes) }
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(uploadingId = null)
+                    refresh()
+                }
+                .onFailure { e ->
+                    _uiState.value = _uiState.value.copy(uploadingId = null, error = e.message ?: "照片上传失败")
+                }
         }
     }
 }

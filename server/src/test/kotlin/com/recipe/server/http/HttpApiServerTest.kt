@@ -12,6 +12,7 @@ import com.recipe.server.db.RecipeDao
 import com.recipe.core.model.Ingredient
 import com.recipe.core.model.Recipe
 import org.junit.AfterClass
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -415,6 +416,37 @@ class HttpApiServerTest {
         assertFalse(request("GET", "/api/materials/bills").second.contains("土豆"))
         // The aggregate row must disappear once the last bill for that material is gone.
         assertFalse(request("GET", "/api/materials/prices").second.contains("土豆"))
+    }
+
+    // ---- Menu photos ----
+
+    @Test
+    fun `a menu photo can be uploaded and read back without a token`() {
+        val created = request("POST", "/api/menus", """{"items":[],"totalCost":0.0}""")
+        assertEquals(200, created.first)
+        val id = Regex("\"id\":(\\d+)").find(created.second)!!.groupValues[1]
+
+        // JPEG magic bytes: enough for the endpoint, which stores raw bytes.
+        val photo = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 1, 2, 3, 4, 5)
+        assertEquals(200, rawRequest("POST", "/api/menus/$id/photo", photo).first)
+
+        val list = request("GET", "/api/menus").second
+        assertTrue(list.contains("\"hasPhoto\":true"))
+        // 地址带版本号（Gson 会把 '=' 转义成 \u003d，所以只比对前缀），换图后 Coil 才不会用旧缓存
+        assertTrue(list.contains("/api/menus/$id/photo?v"))
+
+        // 图片端点必须免鉴权（Coil 不带 Authorization 头）
+        val (code, bytes) = getRaw("/api/menus/$id/photo")
+        assertEquals(200, code)
+        assertArrayEquals(photo, bytes)
+    }
+
+    @Test
+    fun `uploading a photo for someone else's record is rejected`() {
+        assertEquals(
+            404,
+            rawRequest("POST", "/api/menus/999999/photo", byteArrayOf(1, 2, 3)).first
+        )
     }
 
     private fun gsonRecipe(name: String): String =

@@ -126,7 +126,14 @@ private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
             }
             composable(Routes.ORDER) {
                 val vm = viewModel<OrderViewModel>(factory = viewModelFactory {
-                    initializer { OrderViewModel(container.recipeRepository, container.menuRepository, container.orderCartStore) }
+                    initializer {
+                        OrderViewModel(
+                            container.recipeRepository,
+                            container.menuRepository,
+                            container.orderCartStore,
+                            container.materialRepository
+                        )
+                    }
                 })
                 OrderScreen(
                     viewModel = vm,

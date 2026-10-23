@@ -56,7 +56,19 @@ data class MenuRecord(
     val items: List<OrderItem> = emptyList(),
     val totalCost: Double = 0.0,
     val note: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * Theoretical cost at the time of ordering: Σ(材料均价 × 菜谱标注重量), snapshotted so the
+     * history keeps a number even after prices change. Display only — it never feeds the
+     * 菜单 page 「总金额」.
+     */
+    val estimatedCost: Double = 0.0,
+    /** 这条记录是否上传过自己拍的照片（BLOB）。没有时客户端回落到菜品缩略图。 */
+    val hasPhoto: Boolean = false,
+    /** 照片的服务端地址（含缓存版本号），[hasPhoto] 为 false 时为空。 */
+    val photoUrl: String = "",
+    /** 照片最后更新时间，用来给 [photoUrl] 拼缓存版本号，避免换图后仍显示旧图。 */
+    val photoUpdatedAt: Long = 0
 )
 
 /**

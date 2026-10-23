@@ -1,5 +1,10 @@
 package com.recipe.app.ui.menu
 
+import android.graphics.Bitmap
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,35 +12,46 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.recipe.app.R
 import com.recipe.app.ui.components.CircularFab
+import com.recipe.app.ui.recipe.crop.CropImageDialog
+import com.recipe.app.ui.recipe.crop.ImageCrop
 import com.recipe.app.viewmodel.MenusViewModel
 import com.recipe.core.model.MenuRecord
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -46,6 +62,23 @@ private val FabClearance = 88.dp
 @Composable
 fun MenusScreen(viewModel: MenusViewModel, onOpenMaterials: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // 上传流程：点「上传照片」→ 系统选图 → 裁剪成 500×500 → 上传到当前这条记录。
+    var photoTarget by remember { mutableStateOf<Long?>(null) }
+    var pendingCrop by remember { mutableStateOf<Pair<Long, Bitmap>?>(null) }
+
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        val target = photoTarget
+        if (uri != null && target != null) {
+            scope.launch(Dispatchers.IO) {
+                val bitmap = ImageCrop.decode(context.contentResolver, uri) ?: return@launch
+                withContext(Dispatchers.Main) { pendingCrop = target to bitmap }
+            }
+        }
+        photoTarget = null
+    }
 
     // Refresh on every entry: returning from 材料账单 must show the new 总金额 immediately.
     LaunchedEffect(Unit) { viewModel.refresh() }
@@ -72,7 +105,14 @@ fun MenusScreen(viewModel: MenusViewModel, onOpenMaterials: () -> Unit) {
                 }
             } else {
                 items(state.records, key = { it.id }) { record ->
-                    MenuRecordCard(record, onSaveCost = { cost -> viewModel.updateCost(record.id, cost) })
+                    MenuRecordCard(
+                        record = record,
+                        uploading = state.uploadingId == record.id,
+                        onPickPhoto = {
+                            photoTarget = record.id
+                            imagePicker.launch("image/*")
+                        }
+                    )
                 }
             }
         }
@@ -90,6 +130,21 @@ fun MenusScreen(viewModel: MenusViewModel, onOpenMaterials: () -> Unit) {
                 modifier = Modifier.size(36.dp)
             )
         }
+    }
+
+    pendingCrop?.let { (recordId, source) ->
+        CropImageDialog(
+            source = source,
+            onConfirm = { cropped ->
+                viewModel.uploadPhoto(recordId, ImageCrop.toJpegBytes(cropped))
+                source.recycle()
+                pendingCrop = null
+            },
+            onCancel = {
+                source.recycle()
+                pendingCrop = null
+            }
+        )
     }
 }
 
@@ -118,33 +173,93 @@ private fun Stat(label: String, value: String) {
 }
 
 @Composable
-private fun MenuRecordCard(record: MenuRecord, onSaveCost: (Double) -> Unit) {
-    var costText by remember(record.id) { mutableStateOf(if (record.totalCost == 0.0) "" else record.totalCost.toString()) }
+private fun MenuRecordCard(
+    record: MenuRecord,
+    uploading: Boolean,
+    onPickPhoto: () -> Unit
+) {
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Text(formatTime(record.createdAt), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                record.items.joinToString("、") { "${it.recipeName}×${it.quantity}" },
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = costText,
-                    onValueChange = { costText = it },
-                    // 仅作单次记录备注，不再参与顶部的「总金额」（那个口径改为材料账单）。
-                    label = { Text("本次花费") },
-                    prefix = { Text("¥ ") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f)
+        Column {
+            // 有自己拍的照片就优先显示；没有则回落到这道菜的成品图。
+            MenuPhoto(record)
+
+            Column(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        formatTime(record.createdAt),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onPickPhoto, enabled = !uploading) {
+                        Text(
+                            when {
+                                uploading -> "上传中…"
+                                record.hasPhoto -> "更换照片"
+                                else -> "上传照片"
+                            }
+                        )
+                    }
+                }
+                Text(
+                    record.items.joinToString("、") { "${it.recipeName}×${it.quantity}" },
+                    style = MaterialTheme.typography.bodyMedium
                 )
-                OutlinedButton(
-                    onClick = { onSaveCost(costText.toDoubleOrNull() ?: 0.0) },
-                    enabled = costText.isNotBlank(),
-                    modifier = Modifier.padding(start = 12.dp)
+                if (record.estimatedCost > 0.0) {
+                    // 下单时的预估成本快照，仅供回看；不参与顶部统计。
+                    Text(
+                        "预估成本 ¥${money(record.estimatedCost)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 记录自己的照片（按 16:9 展示）；没有照片时展示这次点过的菜的成品图缩略图。
+ */
+@Composable
+private fun MenuPhoto(record: MenuRecord) {
+    if (record.hasPhoto) {
+        AsyncImage(
+            model = record.photoUrl,
+            contentDescription = "菜单照片",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxWidth().height(180.dp)
+        )
+        return
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        record.items.take(5).forEach { item ->
+            if (item.imageUrl.isNotBlank()) {
+                AsyncImage(
+                    model = item.imageUrl,
+                    contentDescription = item.recipeName,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(10.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("保存")
+                    Icon(
+                        Icons.Filled.RestaurantMenu,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
         }

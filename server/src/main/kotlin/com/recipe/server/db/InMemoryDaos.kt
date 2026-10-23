@@ -60,10 +60,20 @@ class InMemoryRecipeDao : RecipeDao {
 class InMemoryMenuDao : MenuDao {
     private val store = LinkedHashMap<Long, MenuRecord>()
     private val owners = LinkedHashMap<Long, Long>()
+    private val photos = LinkedHashMap<Long, ByteArray>()
+    private val photoVersions = LinkedHashMap<Long, Long>()
     private val ids = AtomicLong(1000)
 
     override fun list(userId: Long): List<MenuRecord> =
-        store.values.filter { owners[it.id] == userId }.sortedByDescending { it.createdAt }
+        store.values
+            .filter { owners[it.id] == userId }
+            .map {
+                it.copy(
+                    hasPhoto = photos.containsKey(it.id),
+                    photoUpdatedAt = photoVersions[it.id] ?: 0L
+                )
+            }
+            .sortedByDescending { it.createdAt }
 
     override fun stats(userId: Long): MenuStats = MenuStatsCalculator.calculate(list(userId))
 
@@ -86,7 +96,18 @@ class InMemoryMenuDao : MenuDao {
         if (owners[id] != userId) return
         store.remove(id)
         owners.remove(id)
+        photos.remove(id)
+        photoVersions.remove(id)
     }
+
+    override fun savePhoto(userId: Long, id: Long, bytes: ByteArray): Boolean {
+        if (owners[id] != userId) return false
+        photos[id] = bytes
+        photoVersions[id] = System.currentTimeMillis()
+        return true
+    }
+
+    override fun getPhoto(id: Long): ByteArray? = photos[id]
 }
 
 class InMemoryProfileDao : ProfileDao {

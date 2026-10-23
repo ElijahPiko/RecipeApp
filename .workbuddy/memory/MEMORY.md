@@ -76,6 +76,16 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 - 网格底部留 88dp contentPadding，Snackbar 上移 80dp，否则会压住按钮。
 - 无障碍：`clearAndSetSemantics` 把描述和 onClick 放在同一节点，别只用 `onClickLabel`。
 
+## 理论价格约定（2026-10-22）
+- **界面文案统一叫「预估」**（预估总价 / 预估 ¥x/份 / 预估成本），代码里仍叫 estimate，不要写成「理论」
+- 点菜页的「预估价」= Σ(材料均价 元/千克 × 菜谱用量 千克)，`core/domain/DishEstimator.kt`
+- **只算 foodMaterials，不算 seasonings**；用量解析不支持的直接跳过（返回 null），绝不瞎估
+- 名字匹配：精确 → 唯一子串匹配；有歧义就不计价
+- **理论价不参与任何统计**：菜单页「总金额」只认 `material_bill`；`menu_record.estimated_cost` 只是快照
+- 改菜单统计相关代码时先看 `MenusUiState.totalSpend / averageSpend` 的口径注释
+- 本地验证：`:server:run` 用 TaskStop 停掉后 java 子进程可能仍占 8080，需 netstat 找 PID 手动结束
+
+
 
 ## 认证体系（2026-10-18 建立）
 - 注册/登录：`POST /api/auth/register|login`，返回 Bearer token；`me`/`logout` 同组

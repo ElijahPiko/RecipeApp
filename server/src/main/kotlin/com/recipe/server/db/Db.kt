@@ -61,6 +61,9 @@ object Db {
                     "created_at BIGINT NOT NULL," +
                     "items JSON," +
                     "total_cost DOUBLE NOT NULL DEFAULT 0," +
+                    "estimated_cost DOUBLE NOT NULL DEFAULT 0," +
+                    "image_data MEDIUMBLOB," +
+                    "photo_updated_at BIGINT NOT NULL DEFAULT 0," +
                     "note VARCHAR(255))"
             )
             st.execute(
@@ -120,6 +123,23 @@ object Db {
         if (!columnExists("menu_record", "user_id")) {
             createStatement().use {
                 it.execute("ALTER TABLE menu_record ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0")
+            }
+        }
+        // Theoretical cost snapshot (材料均价 × 菜谱重量), added after the first release.
+        if (!columnExists("menu_record", "estimated_cost")) {
+            createStatement().use {
+                it.execute("ALTER TABLE menu_record ADD COLUMN estimated_cost DOUBLE NOT NULL DEFAULT 0")
+            }
+        }
+        // Optional per-record photo (BLOB) + a version stamp used to bust the client image cache.
+        if (!columnExists("menu_record", "image_data")) {
+            createStatement().use {
+                it.execute("ALTER TABLE menu_record ADD COLUMN image_data MEDIUMBLOB")
+            }
+        }
+        if (!columnExists("menu_record", "photo_updated_at")) {
+            createStatement().use {
+                it.execute("ALTER TABLE menu_record ADD COLUMN photo_updated_at BIGINT NOT NULL DEFAULT 0")
             }
         }
         if (!columnExists("profile", "user_id")) {

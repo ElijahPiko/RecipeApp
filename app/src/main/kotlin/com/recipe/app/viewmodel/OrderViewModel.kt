@@ -3,13 +3,16 @@ package com.recipe.app.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.recipe.app.data.OrderCartStore
+import com.recipe.core.data.MaterialRepository
 import com.recipe.core.data.MenuRepository
 import com.recipe.core.data.RecipeRepository
 import com.recipe.core.domain.AggregatedIngredients
+import com.recipe.core.domain.DishEstimate
+import com.recipe.core.domain.DishEstimator
 import com.recipe.core.domain.IngredientsAggregator
+import com.recipe.core.domain.MaterialPriceIndex
 import com.recipe.core.model.MenuRecord
 import com.recipe.core.model.OrderCart
-import com.recipe.core.model.OrderItem
 import com.recipe.core.model.Recipe
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +25,10 @@ data class OrderUiState(
     val aggregated: AggregatedIngredients = AggregatedIngredients(emptyList(), emptyList()),
     val categories: List<String> = emptyList(),
     val randomCategory: String = "",
+    /** 每道菜的理论单价（材料均价 × 菜谱标注重量），按 recipeId 索引。 */
+    val estimates: Map<Long, DishEstimate> = emptyMap(),
+    /** 全车理论总价 = Σ(单价 × 数量)。仅作展示/记录，不影响菜单页总金额。 */
+    val estimatedTotal: Double = 0.0,
     val loading: Boolean = false,
     val confirmed: Boolean = false,
     val error: String? = null
@@ -30,7 +37,8 @@ data class OrderUiState(
 class OrderViewModel(
     private val recipeRepository: RecipeRepository,
     private val menuRepository: MenuRepository,
-    private val orderCart: OrderCartStore
+    private val orderCart: OrderCartStore,
+    private val materialRepository: MaterialRepository
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OrderUiState())
@@ -75,9 +83,22 @@ class OrderViewModel(
                 item.recipeId to runCatching { recipeRepository.get(item.recipeId) }.getOrNull()
             }.filterValues { it != null }.mapValues { it.value!! }
             val aggregated = IngredientsAggregator.aggregate(recipes.values.toList())
+
+            // Theoretical prices: 材料均价（元/千克）× 菜谱上标注的重量（千克）。Failing to load
+            // the price ledger must not break ordering, so prices degrade to "unknown".
+            val priceIndex = MaterialPriceIndex(
+                runCatching { materialRepository.prices() }.getOrDefault(emptyList())
+            )
+            val estimates = recipes.values.associate { it.id to DishEstimator.estimate(it, priceIndex) }
+            val estimatedTotal = cart.items.sumOf { item ->
+                (estimates[item.recipeId]?.unitPrice ?: 0.0) * item.quantity
+            }
+
             _uiState.value = _uiState.value.copy(
                 recipes = recipes,
                 aggregated = aggregated,
+                estimates = estimates,
+                estimatedTotal = estimatedTotal,
                 loading = false
             )
         }
@@ -97,8 +118,11 @@ class OrderViewModel(
         viewModelScope.launch {
             val record = MenuRecord(
                 items = cart.items,
+                // 手填花费保持 0：菜单页「总金额」取自材料账单，与这里的理论价无关。
                 totalCost = 0.0,
-                createdAt = System.currentTimeMillis()
+                createdAt = System.currentTimeMillis(),
+                // 理论价只做快照记录，方便日后回看，不参与任何统计。
+                estimatedCost = _uiState.value.estimatedTotal
             )
             runCatching { menuRepository.create(record) }
                 .onSuccess {

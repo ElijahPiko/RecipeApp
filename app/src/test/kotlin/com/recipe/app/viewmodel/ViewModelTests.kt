@@ -144,18 +144,6 @@ class MenusViewModelTest {
     }
 
     @Test
-    fun `update cost refreshes stats`() = runTest(dispatcher) {
-        val repo = InMemoryMenuRepository()
-        val menu = repo.create(com.recipe.core.model.MenuRecord(totalCost = 10.0))
-        val vm = MenusViewModel(repo, InMemoryMaterialRepository())
-        vm.refresh()
-        advanceUntilIdle()
-        vm.updateCost(menu.id, 99.0)
-        advanceUntilIdle()
-        assertEquals(99.0, vm.uiState.value.records.first().totalCost, 0.0001)
-    }
-
-    @Test
     fun `total spend comes from the material ledger not the menu costs`() = runTest(dispatcher) {
         val menuRepo = InMemoryMenuRepository()
         menuRepo.create(com.recipe.core.model.MenuRecord(totalCost = 999.0))
@@ -171,6 +159,23 @@ class MenusViewModelTest {
         assertEquals(50.0, vm.uiState.value.totalSpend, 0.0001)
         // 平均花费 = 总金额 ÷ 1 次点菜
         assertEquals(50.0, vm.uiState.value.averageSpend, 0.0001)
+    }
+
+    @Test
+    fun `uploading a menu photo marks the record and clears the uploading flag`() = runTest(dispatcher) {
+        val repo = InMemoryMenuRepository()
+        val menu = repo.create(com.recipe.core.model.MenuRecord(items = emptyList()))
+        val vm = MenusViewModel(repo, InMemoryMaterialRepository())
+        vm.refresh()
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.records.first().hasPhoto)
+
+        vm.uploadPhoto(menu.id, byteArrayOf(1, 2, 3))
+        advanceUntilIdle()
+
+        assertTrue(vm.uiState.value.records.first().hasPhoto)
+        assertEquals(null, vm.uiState.value.uploadingId)
+        assertEquals(3, repo.photo(menu.id)?.size)
     }
 }
 

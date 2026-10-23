@@ -15,13 +15,21 @@ interface MenuDao {
     fun create(userId: Long, record: MenuRecord): MenuRecord
     fun updateCost(userId: Long, id: Long, totalCost: Double): MenuRecord?
     fun delete(userId: Long, id: Long)
+
+    /** Stores [bytes] as this record's photo. Returns false when the record is not the user's. */
+    fun savePhoto(userId: Long, id: Long, bytes: ByteArray): Boolean
+
+    /** Reads the photo of any record by id (used by the public image endpoint). */
+    fun getPhoto(id: Long): ByteArray?
 }
 
 class MySqlMenuDao(private val db: ConnectionProvider) : MenuDao {
 
     override fun list(userId: Long): List<MenuRecord> = db.withConnection { connection ->
         connection.prepareStatement(
-            "SELECT id, created_at, items, total_cost, note FROM menu_record WHERE user_id = ? ORDER BY created_at DESC"
+            "SELECT id, created_at, items, total_cost, note, estimated_cost, photo_updated_at, " +
+                "(image_data IS NOT NULL) AS has_photo " +
+                "FROM menu_record WHERE user_id = ? ORDER BY created_at DESC"
         ).use { ps ->
             ps.setLong(1, userId)
             ps.executeQuery().use { rs ->
@@ -34,7 +42,10 @@ class MySqlMenuDao(private val db: ConnectionProvider) : MenuDao {
                         items = items?.toList() ?: emptyList(),
                         totalCost = rs.getDouble("total_cost"),
                         note = rs.getString("note") ?: "",
-                        createdAt = rs.getLong("created_at")
+                        createdAt = rs.getLong("created_at"),
+                        estimatedCost = rs.getDouble("estimated_cost"),
+                        hasPhoto = rs.getBoolean("has_photo"),
+                        photoUpdatedAt = rs.getLong("photo_updated_at")
                     )
                 }
                 out
@@ -49,7 +60,7 @@ class MySqlMenuDao(private val db: ConnectionProvider) : MenuDao {
         return if (record.id == 0L) {
             db.withConnection { connection ->
                 connection.prepareStatement(
-                    "INSERT INTO menu_record (user_id, created_at, items, total_cost, note) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO menu_record (user_id, created_at, items, total_cost, note, estimated_cost) VALUES (?, ?, ?, ?, ?, ?)",
                     java.sql.Statement.RETURN_GENERATED_KEYS
                 ).use { ps ->
                     ps.setLong(1, userId)
@@ -57,6 +68,7 @@ class MySqlMenuDao(private val db: ConnectionProvider) : MenuDao {
                     ps.setString(3, gson.toJson(record.items))
                     ps.setDouble(4, record.totalCost)
                     ps.setString(5, record.note)
+                    ps.setDouble(6, record.estimatedCost)
                     ps.executeUpdate()
                     val id = ps.generatedKeys.use { keys -> if (keys.next()) keys.getLong(1) else 0L }
                     record.copy(id = id)
@@ -89,6 +101,26 @@ class MySqlMenuDao(private val db: ConnectionProvider) : MenuDao {
                 ps.setLong(2, userId)
                 ps.executeUpdate()
             }
+        }
+    }
+
+    override fun savePhoto(userId: Long, id: Long, bytes: ByteArray): Boolean = db.withConnection { connection ->
+        connection.prepareStatement(
+            "UPDATE menu_record SET image_data = ?, photo_updated_at = ? WHERE id = ? AND user_id = ?"
+        ).use { ps ->
+            ps.setBytes(1, bytes)
+            // The timestamp doubles as a cache-busting version in the client's photo URL.
+            ps.setLong(2, System.currentTimeMillis())
+            ps.setLong(3, id)
+            ps.setLong(4, userId)
+            ps.executeUpdate() > 0
+        }
+    }
+
+    override fun getPhoto(id: Long): ByteArray? = db.withConnection { connection ->
+        connection.prepareStatement("SELECT image_data FROM menu_record WHERE id = ?").use { ps ->
+            ps.setLong(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getBytes("image_data") else null }
         }
     }
 }

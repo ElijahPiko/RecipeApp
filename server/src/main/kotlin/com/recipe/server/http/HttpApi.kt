@@ -55,6 +55,9 @@ class HttpApi(
     companion object {
         private const val MAX_IMAGE_BYTES = 16 * 1024 * 1024
         private val IMAGE_PATH = Regex("/api/recipes/[0-9]+/image")
+
+        /** 菜单记录的照片（用户自己拍的）。GET 需要公开，因为 Coil 不带鉴权头。 */
+        private val MENU_PHOTO_PATH = Regex("/api/menus/[0-9]+/photo")
     }
 
     fun handle(exchange: HttpExchange) {
@@ -70,6 +73,7 @@ class HttpApi(
                 path == "/api/auth/logout" && method == "POST" -> logout(exchange)
                 path == "/api/health" && method == "GET" -> health()
                 IMAGE_PATH.matches(path) && method == "GET" -> serveRecipeImage(exchange)
+                MENU_PHOTO_PATH.matches(path) && method == "GET" -> serveMenuPhoto(exchange)
                 else -> {
                     // Everything else requires a valid Bearer token.
                     val user = authenticate(exchange)
@@ -99,7 +103,7 @@ class HttpApi(
         path == "/api/categories" && method == "POST" -> createCategory(exchange)
         path.matches(Regex("/api/categories/[0-9]+")) && method == "PUT" -> updateCategory(exchange)
         path.matches(Regex("/api/categories/[0-9]+")) && method == "DELETE" -> deleteCategory(exchange)
-        path == "/api/menus" && method == "GET" -> listMenus(userId)
+        path == "/api/menus" && method == "GET" -> listMenus(exchange, userId)
         path == "/api/menus/stats" && method == "GET" -> menuStats(userId)
         path == "/api/menus" && method == "POST" -> createMenu(exchange, userId)
         path == "/api/profile" && method == "GET" -> getProfile(userId)
@@ -111,6 +115,7 @@ class HttpApi(
         path == "/api/materials/stats" && method == "GET" -> Response(200, JsonHolder.gson.toJson(materialDao.stats(userId)))
         path.matches(Regex("/api/materials/bills/[0-9]+")) && method == "DELETE" -> deleteMaterialBill(exchange, userId)
         IMAGE_PATH.matches(path) && method == "POST" -> uploadRecipeImage(exchange)
+        MENU_PHOTO_PATH.matches(path) && method == "POST" -> uploadMenuPhoto(exchange, userId)
         path.matches(Regex("/api/recipes/[0-9]+")) &&
             (method == "GET" || method == "PUT" || method == "DELETE") -> recipeById(exchange, method)
         path.matches(Regex("/api/menus/[0-9]+")) &&
@@ -292,13 +297,18 @@ class HttpApi(
     }
 
     // ---- Menus ----
-    private fun listMenus(userId: Long): Response = Response(200, JsonHolder.gson.toJson(menuDao.list(userId)))
+    private fun listMenus(exchange: HttpExchange, userId: Long): Response {
+        val h = host(exchange)
+        val records = menuDao.list(userId).map { attachPhotoUrl(it, h) }
+        return Response(200, JsonHolder.gson.toJson(records))
+    }
+
     private fun menuStats(userId: Long): Response = Response(200, JsonHolder.gson.toJson(menuDao.stats(userId)))
 
     private fun createMenu(exchange: HttpExchange, userId: Long): Response {
         val record = JsonHolder.gson.fromJson<com.recipe.core.model.MenuRecord>(readBody(exchange), com.recipe.core.model.MenuRecord::class.java)
         val saved = menuDao.create(userId, record)
-        return Response(200, JsonHolder.gson.toJson(saved))
+        return Response(200, JsonHolder.gson.toJson(attachPhotoUrl(saved, host(exchange))))
     }
 
     private fun menuById(exchange: HttpExchange, method: String, userId: Long): Response {
@@ -308,7 +318,7 @@ class HttpApi(
             "PUT" -> {
                 val body = JsonHolder.gson.fromJson<com.recipe.core.model.MenuRecord>(readBody(exchange), com.recipe.core.model.MenuRecord::class.java)
                 val updated = menuDao.updateCost(userId, id, body.totalCost)
-                updated?.let { Response(200, JsonHolder.gson.toJson(it)) }
+                updated?.let { Response(200, JsonHolder.gson.toJson(attachPhotoUrl(it, host(exchange)))) }
                     ?: Response(404, JsonHolder.gson.toJson(mapOf("error" to "not found")))
             }
             else -> {
@@ -316,6 +326,38 @@ class HttpApi(
                 Response(200, "{}")
             }
         }
+    }
+
+    /**
+     * The `?v=` suffix is the upload timestamp: the URL changes whenever the photo is
+     * replaced, so Coil's disk cache cannot keep serving the old picture.
+     */
+    private fun attachPhotoUrl(record: com.recipe.core.model.MenuRecord, host: String): com.recipe.core.model.MenuRecord =
+        if (record.hasPhoto) {
+            record.copy(photoUrl = "http://$host/api/menus/${record.id}/photo?v=${record.photoUpdatedAt}")
+        } else {
+            record.copy(photoUrl = "")
+        }
+
+    // ---- Menu photos (BLOB storage) ----
+    private fun uploadMenuPhoto(exchange: HttpExchange, userId: Long): Response {
+        val id = exchange.requestURI.path.split('/').getOrNull(3)?.toLongOrNull()
+            ?: return Response(400, JsonHolder.gson.toJson(mapOf("error" to "invalid id")))
+        val bytes = readBodyBytes(exchange)
+        if (bytes.isEmpty()) return Response(400, JsonHolder.gson.toJson(mapOf("error" to "图片为空")))
+        if (bytes.size > MAX_IMAGE_BYTES) return Response(413, JsonHolder.gson.toJson(mapOf("error" to "图片大小不能超过 16MB")))
+        if (!menuDao.savePhoto(userId, id, bytes)) {
+            return Response(404, JsonHolder.gson.toJson(mapOf("error" to "菜单记录不存在")))
+        }
+        return Response(200, JsonHolder.gson.toJson(mapOf("ok" to true)))
+    }
+
+    private fun serveMenuPhoto(exchange: HttpExchange): Response {
+        val id = exchange.requestURI.path.split('/').getOrNull(3)?.toLongOrNull()
+            ?: return Response(400, JsonHolder.gson.toJson(mapOf("error" to "invalid id")))
+        val bytes = menuDao.getPhoto(id) ?: return Response(404, JsonHolder.gson.toJson(mapOf("error" to "not found")))
+        exchange.responseHeaders.set("Content-Type", imageContentType(bytes))
+        return Response(200, "", raw = bytes)
     }
 
     // ---- Materials (材料账单) ----
