@@ -28,6 +28,17 @@ fun loadClientConfig(env: String): Properties {
 }
 
 /**
+ * Machine-private properties (`local.properties`). Never committed, so every read must
+ * tolerate the file being absent — otherwise a fresh clone cannot even run `assembleDebug`.
+ */
+fun loadLocalProperties(): Properties {
+    val props = Properties()
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { props.load(it) }
+    return props
+}
+
+/**
  * Resolves the client config for [env] into BuildConfig field triples
  * (type, name, value). Kept as plain data so it can be applied inside
  * `defaultConfig`, where `buildConfigField` is reliably in scope.
@@ -52,6 +63,20 @@ val releaseEnv = providers.gradleProperty("recipeEnv").orNull ?: "prod"
 val debugFields = clientFields("local", defaultLogging = true)
 val releaseFields = clientFields(releaseEnv, defaultLogging = false)
 
+// Signing material lives in local.properties (storeFile / storePassword / keyAlias / keyPassword).
+// Resolved once, up front, so the warning below can name the exact missing keys.
+val localProperties = loadLocalProperties()
+val releaseKeystoreFile = localProperties.getProperty("storeFile")
+    ?.let { rootProject.file(it) }
+    ?.takeIf { it.exists() }
+if (releaseKeystoreFile == null) {
+    logger.warn(
+        "[signing] 未找到 release 签名文件：请在 local.properties 里配置 " +
+            "storeFile / storePassword / keyAlias / keyPassword，" +
+            "否则 assembleProdRelease 只能产出未签名的 APK。"
+    )
+}
+
 android {
     namespace = "com.recipe.app"
     compileSdk = 36
@@ -66,13 +91,30 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Must be declared before buildTypes can reference it.
+    signingConfigs {
+        create("release") {
+            if (releaseKeystoreFile != null) {
+                storeFile = releaseKeystoreFile
+                storePassword = localProperties.getProperty("storePassword")
+                keyAlias = localProperties.getProperty("keyAlias")
+                keyPassword = localProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
         }
         release {
+            // Kept off on purpose: the models (Recipe / MenuRecord / ...) are populated by
+            // Gson reflection, which R8 would need explicit keep rules for.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Only bind a signing config that actually has a keystore; without it Gradle would
+            // fail deep in the packaging step with a much less obvious message.
+            signingConfig = if (releaseKeystoreFile != null) signingConfigs.getByName("release") else null
         }
     }
 

@@ -12,8 +12,17 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 - 因此解释时需说明"为什么这样设计"，避免只罗列事实
 - 用中文交流
 
-## 本机构建环境（重要）
-- **Android SDK 实际在 `D:\Application\Android`**（android-36、build-tools 36.0.0）。
+## 签名与 release 构建（2026-10-24）
+- keystore：`config/keystore/recipe-release.jks`（PKCS12，alias `recipe`）；
+  口令只存 `local.properties` 的 `storePassword`/`keyPassword`（**PKCS12 两者必须一致**）
+- `config/keystore/` 与 `*.jks.*` 已 gitignore（含 `.bak-20261024` 旧库备份）
+- 构建脚本两个硬约束：**不要写 `java.util.Properties()`**（Kotlin DSL 里 `java` 是 Android 插件的扩展，
+  会报 `Unresolved reference 'util'`，用顶部 import 的 `Properties()`）；`buildTypes {}` 只写一次
+- `local.properties` / keystore 都可能不存在，任何读取必须先判存在，否则新机器连 debug 都配置不过
+- release 与 debug 同 applicationId 不同签名，**不能覆盖安装**，需先 `adb uninstall com.recipe.app`
+- 构建命令：`:app:assembleProdRelease`（默认 prod）/ `-PrecipeEnv=local` 可让 release 连本地
+
+## 本机构建环境（重要）- **Android SDK 实际在 `D:\Application\Android`**（android-36、build-tools 36.0.0）。
   环境变量 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 均未设置，需靠 `local.properties` 指定。
 - JDK 17：`JAVA_HOME=D:\Application\jdks\jdk17`
 - MySQL 8 在本机 3306，账号 `root / 123456`，库 `recipe_app`
