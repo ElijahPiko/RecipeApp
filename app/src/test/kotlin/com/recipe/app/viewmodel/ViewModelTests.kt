@@ -230,7 +230,7 @@ class ProfileViewModelTest {
 
     @Test
     fun `loads then saves profile`() = runTest(dispatcher) {
-        val vm = ProfileViewModel(InMemoryProfileRepository(), InMemoryRecipeRepository())
+        val vm = ProfileViewModel(InMemoryProfileRepository())
         advanceUntilIdle()
         val updated = vm.uiState.value.profile.copy(nickname = "大厨")
         vm.update(updated)
@@ -239,27 +239,35 @@ class ProfileViewModelTest {
         assertTrue(vm.uiState.value.saved)
         assertEquals("大厨", vm.uiState.value.profile.nickname)
     }
+}
+
+/** 分类增删改已经从个人页搬到独立的分类管理页，这里跟着搬。 */
+class CategoriesViewModelTest {
+    private val dispatcher = StandardTestDispatcher()
+
+    @Before fun setUp() { Dispatchers.setMain(dispatcher) }
+    @After fun tearDown() { Dispatchers.resetMain() }
 
     @Test
     fun `categories can be added renamed and deleted`() = runTest(dispatcher) {
         val repo = InMemoryRecipeRepository()
-        val vm = ProfileViewModel(InMemoryProfileRepository(), repo)
+        val vm = CategoriesViewModel(repo)
         advanceUntilIdle()
 
-        vm.setNewCategoryName("烧烤")
-        vm.addCategory()
+        vm.setNewName("烧烤")
+        vm.add()
         advanceUntilIdle()
         assertTrue(vm.uiState.value.categories.any { it.name == "烧烤" })
 
         val added = vm.uiState.value.categories.first { it.name == "烧烤" }
         vm.startEdit(added)
         vm.setEditName("烤串")
-        vm.saveEditCategory()
+        vm.saveEdit()
         advanceUntilIdle()
         assertFalse(vm.uiState.value.categories.any { it.name == "烧烤" })
         assertTrue(vm.uiState.value.categories.any { it.name == "烤串" })
 
-        vm.deleteCategory(vm.uiState.value.categories.first { it.name == "烤串" })
+        vm.delete(vm.uiState.value.categories.first { it.name == "烤串" })
         advanceUntilIdle()
         assertFalse(vm.uiState.value.categories.any { it.name == "烤串" })
     }

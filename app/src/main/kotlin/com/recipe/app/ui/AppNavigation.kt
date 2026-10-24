@@ -28,12 +28,14 @@ import androidx.navigation.compose.rememberNavController
 import com.recipe.app.RecipeApplication
 import com.recipe.app.data.AppContainer
 import com.recipe.app.ui.auth.AuthScreen
+import com.recipe.app.ui.categories.CategoriesScreen
 import com.recipe.app.ui.materials.MaterialsScreen
 import com.recipe.app.ui.menu.MenusScreen
 import com.recipe.app.ui.order.OrderScreen
 import com.recipe.app.ui.profile.ProfileScreen
 import com.recipe.app.ui.recipe.NewRecipeScreen
 import com.recipe.app.ui.recipes.RecipesScreen
+import com.recipe.app.viewmodel.CategoriesViewModel
 import com.recipe.app.viewmodel.MaterialsViewModel
 import com.recipe.app.viewmodel.MenusViewModel
 import com.recipe.app.viewmodel.NewRecipeViewModel
@@ -48,6 +50,7 @@ private object Routes {
     const val ORDER = "order"
     const val NEW_RECIPE = "newRecipe"
     const val MATERIALS = "materials"
+    const val CATEGORIES = "categories"
 }
 
 @Composable
@@ -114,15 +117,22 @@ private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
             }
             composable(Routes.PROFILE) {
                 val vm = viewModel<ProfileViewModel>(factory = viewModelFactory {
-                    initializer { ProfileViewModel(container.profileRepository, container.recipeRepository) }
+                    initializer { ProfileViewModel(container.profileRepository) }
                 })
                 ProfileScreen(
                     viewModel = vm,
                     onLogout = {
                         container.tokenStore.clear()
                         onLoggedOut()
-                    }
+                    },
+                    onManageCategories = { navController.navigate(Routes.CATEGORIES) }
                 )
+            }
+            composable(Routes.CATEGORIES) {
+                val vm = viewModel<CategoriesViewModel>(factory = viewModelFactory {
+                    initializer { CategoriesViewModel(container.recipeRepository) }
+                })
+                CategoriesScreen(viewModel = vm, onBack = { navController.popBackStack() })
             }
             composable(Routes.ORDER) {
                 val vm = viewModel<OrderViewModel>(factory = viewModelFactory {
