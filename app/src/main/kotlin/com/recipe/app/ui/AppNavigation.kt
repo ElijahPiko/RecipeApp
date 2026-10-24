@@ -21,10 +21,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.recipe.app.RecipeApplication
 import com.recipe.app.data.AppContainer
 import com.recipe.app.ui.auth.AuthScreen
@@ -33,14 +35,14 @@ import com.recipe.app.ui.materials.MaterialsScreen
 import com.recipe.app.ui.menu.MenusScreen
 import com.recipe.app.ui.order.OrderScreen
 import com.recipe.app.ui.profile.ProfileScreen
-import com.recipe.app.ui.recipe.NewRecipeScreen
+import com.recipe.app.ui.recipe.RecipeEditorScreen
 import com.recipe.app.ui.recipes.RecipesScreen
 import com.recipe.app.viewmodel.CategoriesViewModel
 import com.recipe.app.viewmodel.MaterialsViewModel
 import com.recipe.app.viewmodel.MenusViewModel
-import com.recipe.app.viewmodel.NewRecipeViewModel
 import com.recipe.app.viewmodel.OrderViewModel
 import com.recipe.app.viewmodel.ProfileViewModel
+import com.recipe.app.viewmodel.RecipeEditorViewModel
 import com.recipe.app.viewmodel.RecipesViewModel
 
 private object Routes {
@@ -49,9 +51,13 @@ private object Routes {
     const val PROFILE = "profile"
     const val ORDER = "order"
     const val NEW_RECIPE = "newRecipe"
+    const val RECIPE_EDIT = "recipeEdit/{recipeId}"
     const val MATERIALS = "materials"
     const val CATEGORIES = "categories"
 }
+
+/** 长按菜谱卡片时用：拼出带 id 的编辑页路由。 */
+private fun recipeEditRoute(recipeId: Long): String = "recipeEdit/$recipeId"
 
 @Composable
 fun AppNavigation(container: AppContainer) {
@@ -95,7 +101,8 @@ private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
                 RecipesScreen(
                     viewModel = vm,
                     onOpenOrder = { navController.navigate(Routes.ORDER) },
-                    onNewRecipe = { navController.navigate(Routes.NEW_RECIPE) }
+                    onNewRecipe = { navController.navigate(Routes.NEW_RECIPE) },
+                    onEditRecipe = { recipeId -> navController.navigate(recipeEditRoute(recipeId)) }
                 )
             }
             composable(Routes.MENUS) {
@@ -159,13 +166,29 @@ private fun MainScaffold(container: AppContainer, onLoggedOut: () -> Unit) {
                 )
             }
             composable(Routes.NEW_RECIPE) {
-                val vm = viewModel<NewRecipeViewModel>(factory = viewModelFactory {
-                    initializer { NewRecipeViewModel(container.recipeRepository, container.imageUploader) }
+                val vm = viewModel<RecipeEditorViewModel>(factory = viewModelFactory {
+                    initializer { RecipeEditorViewModel(container.recipeRepository, container.imageUploader) }
                 })
-                NewRecipeScreen(
+                RecipeEditorScreen(
                     viewModel = vm,
                     onBack = { navController.popBackStack() },
-                    onSaved = { navController.popBackStack() }
+                    onDone = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Routes.RECIPE_EDIT,
+                arguments = listOf(navArgument("recipeId") { type = NavType.LongType })
+            ) { entry ->
+                val recipeId = entry.arguments?.getLong("recipeId") ?: 0L
+                val vm = viewModel<RecipeEditorViewModel>(factory = viewModelFactory {
+                    initializer {
+                        RecipeEditorViewModel(container.recipeRepository, container.imageUploader, recipeId)
+                    }
+                })
+                RecipeEditorScreen(
+                    viewModel = vm,
+                    onBack = { navController.popBackStack() },
+                    onDone = { navController.popBackStack() }
                 )
             }
         }

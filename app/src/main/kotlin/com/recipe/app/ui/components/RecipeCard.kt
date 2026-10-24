@@ -1,5 +1,6 @@
 package com.recipe.app.ui.components
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,14 +32,30 @@ import androidx.compose.runtime.remember
 import coil.compose.AsyncImage
 import com.recipe.core.model.Recipe
 
+/**
+ * 菜谱卡片。短按不做任何事，**长按进入编辑页**（[onLongClick]，传 null 表示不可编辑）。
+ */
 @Composable
 fun RecipeCard(
     recipe: Recipe,
     onAdd: (Recipe) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLongClick: ((Recipe) -> Unit)? = null
 ) {
     val placeholderColor = MaterialTheme.colorScheme.surfaceVariant
-    Card(modifier = modifier.fillMaxWidth()) {
+    Card(
+        modifier = modifier.fillMaxWidth().then(
+            if (onLongClick == null) {
+                Modifier
+            } else {
+                Modifier.combinedClickable(
+                    onClick = {},
+                    onLongClickLabel = "编辑菜谱",
+                    onLongClick = { onLongClick(recipe) }
+                )
+            }
+        )
+    ) {
         Box {
             if (recipe.imageUrl.isNotBlank()) {
                 AsyncImage(

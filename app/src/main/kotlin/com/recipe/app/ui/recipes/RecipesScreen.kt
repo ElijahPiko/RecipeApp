@@ -55,7 +55,8 @@ private val FabClearance = 88.dp
 fun RecipesScreen(
     viewModel: RecipesViewModel,
     onOpenOrder: () -> Unit,
-    onNewRecipe: () -> Unit
+    onNewRecipe: () -> Unit,
+    onEditRecipe: (Long) -> Unit = {}
 ) {
     val state by viewModel.uiState.collectAsState()
     val cart by viewModel.cart.collectAsState()
@@ -127,7 +128,9 @@ fun RecipesScreen(
                                 onAdd = { r ->
                                     viewModel.addToOrder(r)
                                     scope.launch { snackbar.showSnackbar("已将「${r.name}」加入菜单") }
-                                }
+                                },
+                                // 长按卡片进入编辑页
+                                onLongClick = { r -> onEditRecipe(r.id) }
                             )
                         }
                     }
