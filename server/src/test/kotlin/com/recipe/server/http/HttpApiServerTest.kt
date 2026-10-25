@@ -48,9 +48,11 @@ class HttpApiServerTest {
             port = freePort()
             val config = ServerConfig(host = "127.0.0.1", port = port)
             recipeDao = InMemoryRecipeDao()
+            // profile 已并入 users：两个 DAO 必须共用同一份账号存储
+            val users = InMemoryUserDao()
             val api = HttpApi(
-                config, recipeDao, InMemoryMenuDao(), InMemoryProfileDao(),
-                InMemoryCategoryDao(), InMemoryUserDao(), InMemoryMaterialDao()
+                config, recipeDao, InMemoryMenuDao(), InMemoryProfileDao(users),
+                InMemoryCategoryDao(), users, InMemoryMaterialDao()
             )
             server = RecipeServer(config, api)
             server.start()
@@ -313,6 +315,37 @@ class HttpApiServerTest {
     }
 
     @Test
+    fun `the nickname typed at registration shows up in the profile`() {
+        val reg = request(
+            "POST", "/api/auth/register",
+            """{"username":"nick_user","password":"secret66","nickname":"新来的厨师"}""",
+            auth = null
+        )
+        assertEquals(200, reg.first)
+        val newToken = Regex("\"token\":\"([^\"]+)\"").find(reg.second)!!.groupValues[1]
+
+        // 个人页读的是 profile，注册昵称必须落进 profile，否则只会显示默认的「美食家」
+        val profile = request("GET", "/api/profile", auth = newToken)
+        assertEquals(200, profile.first)
+        assertTrue(profile.second.contains("新来的厨师"))
+    }
+
+    @Test
+    fun `registering without a nickname falls back to the username`() {
+        val reg = request(
+            "POST", "/api/auth/register",
+            """{"username":"nonick_user","password":"secret66"}""",
+            auth = null
+        )
+        assertEquals(200, reg.first)
+        val newToken = Regex("\"token\":\"([^\"]+)\"").find(reg.second)!!.groupValues[1]
+
+        val profile = request("GET", "/api/profile", auth = newToken)
+        assertEquals(200, profile.first)
+        assertTrue(profile.second.contains("\"nickname\":\"nonick_user\""))
+    }
+
+    @Test
     fun `profile saves and reads back per user`() {
         val saved = request("PUT", "/api/profile", """{"nickname":"大厨","signature":"好好吃饭","location":"北京","favoriteCategory":"家常菜"}""")
         assertEquals(200, saved.first)
@@ -342,9 +375,10 @@ class HttpApiServerTest {
     fun `health endpoint returns 503 when the database probe fails`() {
         val p = freePort()
         val config = ServerConfig(host = "127.0.0.1", port = p)
+        val users = InMemoryUserDao()
         val api = HttpApi(
             config,
-            InMemoryRecipeDao(), InMemoryMenuDao(), InMemoryProfileDao(), InMemoryCategoryDao(), InMemoryUserDao(),
+            InMemoryRecipeDao(), InMemoryMenuDao(), InMemoryProfileDao(users), InMemoryCategoryDao(), users,
             InMemoryMaterialDao(),
             object : HealthSource {
                 override fun ping(): Boolean = false

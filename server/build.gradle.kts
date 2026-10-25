@@ -34,6 +34,15 @@ tasks.withType<JavaExec>().configureEach {
     environment(System.getenv())
 }
 
+/**
+ * 单测里的 MySQL 集成测试也要按 local 配置连库：否则只要 `config/server.prod.properties` 存在，
+ * 测试进程就会按 prod 连（账号密码不同）→ 连不上 → Assume 静默跳过，等于白跑。
+ */
+tasks.withType<Test>().configureEach {
+    val explicitEnv = System.getProperty("recipe.env") ?: System.getenv("RECIPE_ENV")
+    systemProperty("recipe.env", explicitEnv?.takeIf { it.isNotBlank() } ?: "local")
+}
+
 dependencies {
     implementation(project(":core"))
     implementation(libs.gson)

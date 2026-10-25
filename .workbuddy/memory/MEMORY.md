@@ -112,6 +112,11 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 
 ## 认证体系（2026-10-18 建立）
 - 注册/登录：`POST /api/auth/register|login`，返回 Bearer token；`me`/`logout` 同组
+- **账号与个人资料已合并在 `users` 一张表**（2026-10-25）：`username`/`password_hash`/`salt`/`token`/
+  `created_at` + 资料字段 `nickname`/`avatar_url`/`signature`/`location`/`favorite_category`。
+  不再有 `profile` 表；`ProfileDao` 只是对 `users` 行的读写视图（`save` 只 UPDATE 不 INSERT）
+- 内存版 `InMemoryProfileDao(users: InMemoryUserDao)` 必须和账号共用同一份存储，
+  否则「注册昵称 → 个人页」这类行为会和 MySQL 版不一致
 - 其余 `/api/**` 一律要 `Authorization: Bearer <token>`，图片 GET 除外（Coil 无法带 header）
 - 密码 PBKDF2（12 万迭代+随机盐）存 `users` 表；token 存 `users.token`
 - 数据隔离：recipes/categories 全局共享；menu_record/profile 按 user_id 隔离

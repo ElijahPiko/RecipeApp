@@ -48,11 +48,13 @@ fun main() {
 
     if (config.useInMemory) {
         println("Running with in-memory data (no MySQL).")
+        val memoryUsers = InMemoryUserDao()
         recipeDao = InMemoryRecipeDao()
         categoryDao = InMemoryCategoryDao()
         menuDao = InMemoryMenuDao()
-        profileDao = InMemoryProfileDao()
-        userDao = InMemoryUserDao()
+        userDao = memoryUsers
+        // 资料与账号共用同一份内存存储（对应 MySQL 里合并后的 users 表）
+        profileDao = InMemoryProfileDao(memoryUsers)
         materialDao = InMemoryMaterialDao()
     } else {
         try {
@@ -75,11 +77,12 @@ fun main() {
             pool = null
             System.err.println("MySQL connection failed: ${e.message}")
             System.err.println("Falling back to in-memory storage. Set RECIPE_IN_MEMORY=false and fix MySQL to persist data.")
+            val memoryUsers = InMemoryUserDao()
             recipeDao = InMemoryRecipeDao()
             categoryDao = InMemoryCategoryDao()
             menuDao = InMemoryMenuDao()
-            profileDao = InMemoryProfileDao()
-            userDao = InMemoryUserDao()
+            userDao = memoryUsers
+            profileDao = InMemoryProfileDao(memoryUsers)
             materialDao = InMemoryMaterialDao()
         }
     }

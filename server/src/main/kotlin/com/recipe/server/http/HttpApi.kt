@@ -154,6 +154,7 @@ class HttpApi(
         if (password.length < 6) {
             return Response(400, JsonHolder.gson.toJson(mapOf("error" to "密码至少需要 6 位")))
         }
+        // 昵称直接落在账号这一行上（users 与 profile 已合并），个人页读到的就是它。
         val user = userDao.create(username, password, cred.nickname?.trim().orEmpty())
             ?: return Response(409, JsonHolder.gson.toJson(mapOf("error" to "用户名已被占用")))
         return sessionResponse(user)

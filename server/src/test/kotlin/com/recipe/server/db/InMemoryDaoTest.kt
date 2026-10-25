@@ -83,10 +83,22 @@ class InMemoryDaoTest {
     }
 
     @Test
-    fun `profile dao persists per user`() {
-        val dao = InMemoryProfileDao()
-        dao.save(1L, UserProfile(nickname = "小明"))
-        assertEquals("小明", dao.get(1L).nickname)
-        assertEquals("美食家", dao.get(2L).nickname)
+    fun `profile dao persists on the account row`() {
+        // 资料和账号是同一份数据：先有账号，才有资料可存
+        val users = InMemoryUserDao()
+        val alice = users.create("alice", "secret66", "小明")!!
+        val bella = users.create("bella", "secret66", "小美")!!
+        val dao = InMemoryProfileDao(users)
+
+        // 注册时的昵称直接就是资料里的昵称
+        assertEquals("小明", dao.get(alice.id).nickname)
+
+        dao.save(alice.id, UserProfile(nickname = "小明改名了", location = "上海"))
+        assertEquals("小明改名了", dao.get(alice.id).nickname)
+        assertEquals("上海", dao.get(alice.id).location)
+
+        // 不会串到另一个账号
+        assertEquals("小美", dao.get(bella.id).nickname)
+        assertEquals("记录每一道好菜", dao.get(bella.id).signature)
     }
 }

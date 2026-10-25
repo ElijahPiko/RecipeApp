@@ -3,8 +3,9 @@ package com.recipe.server.db
 import com.recipe.core.model.UserProfile
 
 /**
- * The profile is per user. Rows written before the multi-user migration carry
- * `user_id = 0` and are simply shadowed once a real account saves its own profile.
+ * 个人资料现在和账号是同一行（`users` 表）：账号存在，资料就存在。
+ *
+ * 没有独立的 profile 表了，所以 [save] 只更新、不再插入 —— 用不存在的 userId 保存等于什么也没存。
  */
 interface ProfileDao {
     fun get(userId: Long): UserProfile
@@ -15,16 +16,16 @@ class MySqlProfileDao(private val db: ConnectionProvider) : ProfileDao {
 
     override fun get(userId: Long): UserProfile = db.withConnection { connection ->
         connection.prepareStatement(
-            "SELECT user_id, nickname, avatar_url, signature, location, favorite_category FROM profile WHERE user_id = ?"
+            "SELECT nickname, avatar_url, signature, location, favorite_category FROM users WHERE id = ?"
         ).use { ps ->
             ps.setLong(1, userId)
             ps.executeQuery().use { rs ->
                 if (rs.next()) {
                     UserProfile(
-                        id = rs.getLong("user_id"),
-                        nickname = rs.getString("nickname") ?: "美食家",
+                        id = userId,
+                        nickname = rs.getString("nickname")?.takeIf { it.isNotBlank() } ?: "美食家",
                         avatarUrl = rs.getString("avatar_url") ?: "",
-                        signature = rs.getString("signature") ?: "",
+                        signature = rs.getString("signature") ?: "记录每一道好菜",
                         location = rs.getString("location") ?: "",
                         favoriteCategory = rs.getString("favorite_category") ?: ""
                     )
@@ -36,11 +37,10 @@ class MySqlProfileDao(private val db: ConnectionProvider) : ProfileDao {
     }
 
     override fun save(userId: Long, profile: UserProfile): UserProfile {
-        // Update first; fall back to insert when this user has no row yet. Both statements
-        // share one borrowed connection so the update/insert pair stays on the same session.
         db.withConnection { connection ->
-            val updated = connection.prepareStatement(
-                "UPDATE profile SET nickname = ?, avatar_url = ?, signature = ?, location = ?, favorite_category = ? WHERE user_id = ?"
+            connection.prepareStatement(
+                "UPDATE users SET nickname = ?, avatar_url = ?, signature = ?, location = ?, " +
+                    "favorite_category = ? WHERE id = ?"
             ).use { ps ->
                 ps.setString(1, profile.nickname)
                 ps.setString(2, profile.avatarUrl)
@@ -50,20 +50,31 @@ class MySqlProfileDao(private val db: ConnectionProvider) : ProfileDao {
                 ps.setLong(6, userId)
                 ps.executeUpdate()
             }
-            if (updated == 0) {
-                connection.prepareStatement(
-                    "INSERT INTO profile (user_id, nickname, avatar_url, signature, location, favorite_category) VALUES (?, ?, ?, ?, ?, ?)"
-                ).use { ps ->
-                    ps.setLong(1, userId)
-                    ps.setString(2, profile.nickname)
-                    ps.setString(3, profile.avatarUrl)
-                    ps.setString(4, profile.signature)
-                    ps.setString(5, profile.location)
-                    ps.setString(6, profile.favoriteCategory)
-                    ps.executeUpdate()
-                }
-            }
         }
-        return profile.copy(id = userId)
+        return get(userId)
+    }
+}
+
+/**
+ * 内存版同样合并：资料存在 [InMemoryUserDao] 的账号行上，而不是单独一个 map。
+ * 这样「注册填的昵称能出现在个人页」这类行为才和 MySQL 版一致。
+ */
+class InMemoryProfileDao(private val users: InMemoryUserDao) : ProfileDao {
+
+    override fun get(userId: Long): UserProfile {
+        val row = users.findById(userId) ?: return UserProfile(id = userId)
+        return UserProfile(
+            id = userId,
+            nickname = row.nickname.ifBlank { "美食家" },
+            avatarUrl = row.avatarUrl,
+            signature = row.signature.ifBlank { "记录每一道好菜" },
+            location = row.location,
+            favoriteCategory = row.favoriteCategory
+        )
+    }
+
+    override fun save(userId: Long, profile: UserProfile): UserProfile {
+        users.updateProfile(userId, profile)
+        return get(userId)
     }
 }

@@ -73,15 +73,7 @@ object Db {
                     "color_hex VARCHAR(16) NOT NULL DEFAULT '#FF9800'," +
                     "sort_order INT NOT NULL DEFAULT 0)"
             )
-            st.execute(
-                "CREATE TABLE IF NOT EXISTS profile (" +
-                    "user_id BIGINT PRIMARY KEY," +
-                    "nickname VARCHAR(128)," +
-                    "avatar_url TEXT," +
-                    "signature VARCHAR(255)," +
-                    "location VARCHAR(128)," +
-                    "favorite_category VARCHAR(64))"
-            )
+            // 账号与个人资料合并成一张表：一个账号就是一行，昵称/签名/所在地都在这行上。
             st.execute(
                 "CREATE TABLE IF NOT EXISTS users (" +
                     "id BIGINT AUTO_INCREMENT PRIMARY KEY," +
@@ -89,6 +81,10 @@ object Db {
                     "password_hash VARCHAR(255) NOT NULL," +
                     "salt VARCHAR(64) NOT NULL," +
                     "nickname VARCHAR(128)," +
+                    "avatar_url TEXT," +
+                    "signature VARCHAR(255)," +
+                    "location VARCHAR(128)," +
+                    "favorite_category VARCHAR(64)," +
                     "token VARCHAR(64)," +
                     "created_at BIGINT NOT NULL)"
             )
@@ -142,23 +138,43 @@ object Db {
                 it.execute("ALTER TABLE menu_record ADD COLUMN photo_updated_at BIGINT NOT NULL DEFAULT 0")
             }
         }
-        if (!columnExists("profile", "user_id")) {
-            createStatement().use {
-                it.execute("ALTER TABLE profile ADD COLUMN user_id BIGINT NOT NULL DEFAULT 0")
+        // ---- users / profile 二合一 ----
+        // 老库里个人资料单独一张 profile 表；现在统一落到 users 这一行上。
+        listOf(
+            "avatar_url" to "TEXT",
+            "signature" to "VARCHAR(255)",
+            "location" to "VARCHAR(128)",
+            "favorite_category" to "VARCHAR(64)"
+        ).forEach { (column, type) ->
+            if (!columnExists("users", column)) {
+                createStatement().use { it.execute("ALTER TABLE users ADD COLUMN $column $type") }
             }
         }
-        // Legacy profile tables were keyed by `id` (fixed row id=1) and cannot accept
-        // per-user inserts. Rebuild the key around user_id; the old single row holds
-        // only default values, so dropping it loses nothing.
-        if (columnExists("profile", "id")) {
-            createStatement().use { st ->
-                st.execute("ALTER TABLE profile DROP PRIMARY KEY")
-                st.execute("ALTER TABLE profile DROP COLUMN id")
-                st.execute("DELETE FROM profile WHERE user_id = 0")
-                st.execute("ALTER TABLE profile ADD PRIMARY KEY (user_id)")
+        // 把 profile 里已有的资料搬进 users，然后把旧表改名留档（不直接删，出问题还能查）。
+        if (tableExists("profile") && !tableExists("profile_merged_backup")) {
+            if (columnExists("profile", "user_id")) {
+                createStatement().use {
+                    it.execute(
+                        "UPDATE users u JOIN profile p ON p.user_id = u.id SET " +
+                            "u.nickname = COALESCE(NULLIF(p.nickname, ''), u.nickname), " +
+                            "u.avatar_url = p.avatar_url, " +
+                            "u.signature = p.signature, " +
+                            "u.location = p.location, " +
+                            "u.favorite_category = p.favorite_category"
+                    )
+                }
             }
+            createStatement().use { it.execute("RENAME TABLE profile TO profile_merged_backup") }
         }
     }
+
+    private fun Connection.tableExists(table: String): Boolean =
+        prepareStatement(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"
+        ).use { ps ->
+            ps.setString(1, table)
+            ps.executeQuery().use { rs -> rs.next() && rs.getInt(1) > 0 }
+        }
 
     private fun Connection.columnExists(table: String, column: String): Boolean =
         prepareStatement(

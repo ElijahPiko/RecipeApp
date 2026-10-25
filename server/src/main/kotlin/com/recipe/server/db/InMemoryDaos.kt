@@ -110,18 +110,6 @@ class InMemoryMenuDao : MenuDao {
     override fun getPhoto(id: Long): ByteArray? = photos[id]
 }
 
-class InMemoryProfileDao : ProfileDao {
-    private val profiles = LinkedHashMap<Long, UserProfile>()
-
-    override fun get(userId: Long): UserProfile = profiles[userId] ?: UserProfile(id = userId)
-
-    override fun save(userId: Long, profile: UserProfile): UserProfile {
-        val saved = profile.copy(id = userId)
-        profiles[userId] = saved
-        return saved
-    }
-}
-
 /**
  * In-memory [MaterialDao]. Mirrors the SQL contract: averages are weighted by weight and
  * are recomputed from the surviving bills on delete.

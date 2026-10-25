@@ -95,11 +95,41 @@ class MySqlDaoIntegrationTest {
             assertTrue(menuDao.list(1L).any { it.id == menu.id })
 
             val profileDao = MySqlProfileDao(db)
-            profileDao.save(1L, UserProfile(nickname = "测试用户", location = "上海"))
-            assertEquals("测试用户", profileDao.get(1L).nickname)
+            // 资料挂在账号行上：先建账号，再存资料
+            val profileUser = MySqlUserDao(db).create("profile_${System.nanoTime().toString().takeLast(6)}", "secret66", "测试用户")!!
+            profileDao.save(profileUser.id, UserProfile(nickname = "测试用户", location = "上海"))
+            assertEquals("测试用户", profileDao.get(profileUser.id).nickname)
+            assertEquals("上海", profileDao.get(profileUser.id).location)
 
             recipeDao.delete(saved.id)
             menuDao.delete(1L, menu.id)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `profile lives on the merged user row`() {
+        // 用独立的库：其他用例共用 recipe_app_test，容易互相干扰
+        val db = Db.open(ServerConfig(dbName = "recipe_app_profile_test"))
+        try {
+            val suffix = System.nanoTime().toString().takeLast(6)
+            val userDao = MySqlUserDao(db)
+            val user = userDao.create("nick_$suffix", "secret66", "注册时填的昵称")!!
+            val profileDao = MySqlProfileDao(db)
+
+            // 合并后：注册昵称就是个人页昵称，不需要额外的 profile 行
+            assertEquals("注册时填的昵称", profileDao.get(user.id).nickname)
+
+            // 存过一次资料后以存进去的为准
+            profileDao.save(user.id, UserProfile(nickname = "后来改的昵称", signature = "好好吃饭"))
+            assertEquals("后来改的昵称", profileDao.get(user.id).nickname)
+            assertEquals("好好吃饭", profileDao.get(user.id).signature)
+
+            // users 表里不再有独立的 profile 表残留
+            val other = userDao.create("other_$suffix", "secret66", "另一个人")!!
+            assertEquals("另一个人", profileDao.get(other.id).nickname)
+            assertEquals("记录每一道好菜", profileDao.get(other.id).signature)
         } finally {
             db.close()
         }

@@ -76,8 +76,14 @@ Recipe/
 ## 数据库
 
 首次启动后端会自动创建数据库 `recipe_app` 及以下表：`recipe`（菜谱）、`category`（分类）、
-`menu_record`（菜单记录）、`profile`（个人信息）、`material_bill`（材料账单）、
+`menu_record`（菜单记录）、`users`（账号 + 个人资料）、`material_bill`（材料账单）、
 `material_price`（材料均价）。菜谱的食品材料 / 调料 / 步骤以 JSON 列存储。
+
+`users` **把账号和个人资料合并在同一行**：`username` / `password_hash` / `salt` / `token` 之外，
+还有 `nickname` / `avatar_url` / `signature` / `location` / `favorite_category`。
+账号存在，资料就存在，不需要额外的一张 profile 表。
+老版本库里独立的 `profile` 表会在启动时自动并入 `users`，随后改名为
+`profile_merged_backup` 留档（确认无误后可以手动 `DROP TABLE profile_merged_backup`）。
 
 `material_bill` 每行是一次采购（`name` / `weight_kg` / `price` / `created_at`），按 `user_id` 隔离；
 `material_price` 以 `(user_id, name)` 为主键，维护累计重量、累计金额与条数，
