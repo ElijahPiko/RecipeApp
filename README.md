@@ -152,18 +152,24 @@ config/
 ### 切换后端环境
 
 ```bash
-gradlew :server:run                      # 自动用 config/server.local.properties
+gradlew :server:run                      # 固定用 config/server.local.properties
 gradlew :server:run -Drecipe.env=prod    # 显式指定生产配置
 RECIPE_ENV=prod gradlew :server:run      # 同上（跨平台写法）
 ```
 
-若`config/server.prod.properties` 存在且未指定环境，默认按 `prod` 加载；
-否则用 `local`。启动日志会打印实际生效的配置来源：
+`gradlew :server:run` 会被 Gradle 强制指定为 `local`，**不会**因为
+`config/server.prod.properties` 存在就切到生产配置——那是给服务器用的，账号密码与本机不同，
+连不上 MySQL 时服务端会静默降级成内存存储（重启即丢数据）。
+直接跑 jar（部署场景）时仍沿用老规则：`RECIPE_ENV` 未指定且 prod 配置存在则按 `prod` 加载。
+
+启动日志会打印实际生效的配置来源，**每次启动都该看一眼前两行**：
 
 ```
 Config env: local (source: D:\...\config\server.local.properties)
 Effective: http://0.0.0.0:8080 | db=127.0.0.1:3306/recipe_app | inMemory=false
 ```
+
+如果看到 `Falling back to in-memory storage`，说明 MySQL 没连上，接下来所有数据都不会落盘。
 
 `server.prod.properties` 含密码，已被 `.gitignore` 忽略；部署时更推荐直接注入
 `RECIPE_DB_PASSWORD` 环境变量，配置文件里留空即可。

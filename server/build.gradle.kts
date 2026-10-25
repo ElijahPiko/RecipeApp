@@ -22,9 +22,14 @@ application {
  * Gradle does not pass `-D` through to the forked process by default, so
  * `./gradlew :server:run -Drecipe.env=prod` would otherwise silently be ignored.
  * The RECIPE_ENV environment variable works without this.
+ *
+ * 本地 `:server:run` 默认锁定 local：否则只要 `config/server.prod.properties` 存在，
+ * 服务端就会自动切到生产配置（那是给服务器用的、账号密码与本机不同），连不上 MySQL 后
+ * 静默降级成内存存储，重启就丢数据。部署走 jar + systemd，不受这里影响。
  */
 tasks.withType<JavaExec>().configureEach {
-    System.getProperty("recipe.env")?.let { systemProperty("recipe.env", it) }
+    val explicitEnv = System.getProperty("recipe.env") ?: System.getenv("RECIPE_ENV")
+    systemProperty("recipe.env", explicitEnv?.takeIf { it.isNotBlank() } ?: "local")
     // Keep the server's own environment variables (RECIPE_*) available.
     environment(System.getenv())
 }

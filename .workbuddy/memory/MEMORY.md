@@ -85,6 +85,20 @@ README.md写得详实且与代码基本一致，可作为事实基准参考（�
 - 网格底部留 88dp contentPadding，Snackbar 上移 80dp，否则会压住按钮。
 - 无障碍：`clearAndSetSemantics` 把描述和 onClick 放在同一节点，别只用 `onClickLabel`。
 
+## 后端存储与环境选择（2026-10-25 重要）
+- **启动日志前两行必看**：`Falling back to in-memory storage` = MySQL 没连上，**数据不会落盘**
+- `config/server.prod.properties` 存在时，直接跑 jar 会按 prod 加载（本机 db.user=recipe_app 不存在）；
+  `./gradlew :server:run` 已在 `server/build.gradle.kts` 里强制默认 `local`，避免误连生产配置
+- 本机 MySQL 仍是 root/123456（`config/server.local.properties`），真实数据一直在库里，
+  曾经误判成「库被重置」其实是服务端跑在内存模式
+
+## 客户端网络层约定
+- `RecipeApi` 里 `call()` 会自动加 `Authorization`，**任何自己 build Request 的新方法都必须手动加**
+  （`upload()` 曾漏掉，导致保存带图菜谱报「未登录」）
+- 改网络层后用**真实 UI** 验证一次，别只用 curl —— curl 带 token 测不出客户端缺头
+- 「保存 + 上传图片」这类两步操作要分开处理失败：主体成功了就不能整体报失败，
+  否则用户重试会产生重复数据（编辑页已改成图片失败时切编辑模式，重试走 PUT）
+
 ## 理论价格约定（2026-10-22）
 - **界面文案统一叫「预估」**（预估总价 / 预估 ¥x/份 / 预估成本），代码里仍叫 estimate，不要写成「理论」
 - 点菜页的「预估价」= Σ(材料均价 元/千克 × 菜谱用量 千克)，`core/domain/DishEstimator.kt`
