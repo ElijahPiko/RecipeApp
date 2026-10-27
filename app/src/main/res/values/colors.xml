@@ -1,3 +1,4 @@
 <resources>
-    <color name="ic_launcher_background">#FF7043</color>
+    <!-- 图标底色：和插画本身的米白背景一致，遮罩裁切时不会露出色差 -->
+    <color name="ic_launcher_background">#F5EFDF</color>
 </resources>
