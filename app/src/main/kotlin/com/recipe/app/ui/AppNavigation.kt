@@ -11,8 +11,11 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -63,9 +66,27 @@ private fun recipeEditRoute(recipeId: Long): String = "recipeEdit/$recipeId"
 fun AppNavigation(container: AppContainer) {
     // Session state: no stored token -> start at the auth screen.
     var loggedIn by rememberSaveable { mutableStateOf(container.tokenStore.hasToken()) }
+    var sessionExpiredHint by remember { mutableStateOf(false) }
+    val expired by container.sessionExpired.collectAsState()
+
+    // 任何接口拿到 401 → 整体退回登录页，并说明原因；不要让用户停在业务页上一遍遍看「未登录」。
+    LaunchedEffect(expired) {
+        if (expired) {
+            sessionExpiredHint = true
+            loggedIn = false
+            container.sessionExpired.value = false
+        }
+    }
 
     if (!loggedIn) {
-        AuthScreen(container = container, onSuccess = { loggedIn = true })
+        AuthScreen(
+            container = container,
+            sessionExpired = sessionExpiredHint,
+            onSuccess = {
+                sessionExpiredHint = false
+                loggedIn = true
+            }
+        )
         return
     }
 
